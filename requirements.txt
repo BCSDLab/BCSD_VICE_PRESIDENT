@@ -2,5 +2,6 @@ requests
 #pyhwpx
 pandas
 openpyxl
+python-dotenv
 google-api-python-client
 google-auth

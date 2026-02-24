@@ -111,7 +111,7 @@ def update_ledger_sheet1(df, ledger_path):
     print(f"ledger.xlsx Sheet1 업데이트 완료 ({len(df)}개 행)")
 
 
-def run(source_path, start, end, output_path=None):
+def run(source_path, start, end, output_path=None, template_path=None, ledger_path=None):
     start_ym = _parse_period(start)
     end_ym = _parse_period(end)
 
@@ -128,8 +128,8 @@ def run(source_path, start, end, output_path=None):
         print(f"경고: {start}~{end} 범위의 데이터가 없습니다.")
         return
 
-    write_to_ledger(df_filtered, TEMPLATE_PATH, output_path, start_ym, end_ym)
-    update_ledger_sheet1(df_filtered, LEDGER_PATH)
+    write_to_ledger(df_filtered, template_path or TEMPLATE_PATH, output_path, start_ym, end_ym)
+    update_ledger_sheet1(df_filtered, ledger_path or LEDGER_PATH)
 
 
 if __name__ == '__main__':
