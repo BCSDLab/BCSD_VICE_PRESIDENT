@@ -8,11 +8,11 @@ import hwp.hwp_generator as hwpg
 
 load_dotenv()
 
-OUTPUT_DIR        = os.getenv('OUTPUT_DIR',        'output')
+OUTPUT_DIR        = 'output'
+IMAGE_DIR         = 'receipt_images'
 LEDGER_PATH       = os.getenv('LEDGER_PATH',       'ledger.xlsx')
 HWP_TEMPLATE      = os.getenv('HWP_TEMPLATE_PATH', 'evid_format.hwpx')
 HWP_OUTPUT        = os.getenv('HWP_OUTPUT_PATH',   'output.hwpx')
-IMAGE_DIR         = os.getenv('IMAGE_DIR',          'receipt_images')
 MEMBERSHIP_SOURCE = os.getenv('MEMBERSHIP_SOURCE')
 
 HEADER_ROW     = 0
