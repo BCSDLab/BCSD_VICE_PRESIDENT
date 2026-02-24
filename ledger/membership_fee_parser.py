@@ -28,12 +28,31 @@ def parse_source(file_path):
         file_path, sheet_name=None, header=SOURCE_HEADER_ROW, usecols=SOURCE_COLS
     )
     year_pattern = re.compile(r'^\d{4}년$')
-    frames = [df for name, df in all_sheets.items() if year_pattern.match(name)]
+    wb = openpyxl.load_workbook(file_path, data_only=True)
+
+    frames = []
+    for name, df in all_sheets.items():
+        if not year_pattern.match(name):
+            continue
+
+        ws = wb[name]
+        data_start_row = SOURCE_HEADER_ROW + 2  # 1-indexed: header=row2, data=row3
+
+        links = []
+        for row in ws.iter_rows(min_row=data_start_row):
+            if row[3].value is None:  # D열(날짜) None이면 스킵
+                continue
+            content_cell = row[4]    # E열(내용)
+            link = content_cell.hyperlink.target if content_cell.hyperlink else None
+            links.append(link)
+
+        df_clean = df.dropna(subset=['날짜']).reset_index(drop=True)
+        df_clean['링크'] = links[:len(df_clean)]
+        frames.append(df_clean)
+
     if not frames:
         raise ValueError("연도별 시트(YYYY년)를 찾을 수 없습니다.")
-    df = pd.concat(frames, ignore_index=True)
-    df = df.dropna(subset=['날짜']).reset_index(drop=True)
-    return df
+    return pd.concat(frames, ignore_index=True)
 
 
 def filter_by_period(df, start_ym, end_ym):

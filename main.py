@@ -37,7 +37,6 @@ def main():
 
     expenses = df[df['입/출'] < 0].copy().reset_index(drop=True)
     expenses['종류'] = expenses['내용']
-    expenses['링크'] = None
     print(f"      → 지출 {len(expenses)}건 증빙 서류 생성 대상")
 
     if sys.platform != 'win32':
