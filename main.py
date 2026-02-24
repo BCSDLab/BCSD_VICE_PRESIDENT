@@ -35,7 +35,7 @@ def main():
         return
     print(f"      → {len(df)}건 ({ledger_output})")
 
-    expenses = df[df['입/출'] < 0].copy().reset_index(drop=True)
+    expenses = df[df['입/출'] < 0].copy()
     expenses['종류'] = expenses['내용']
     print(f"      → 지출 {len(expenses)}건 증빙 서류 생성 대상")
 
