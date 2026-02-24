@@ -4,7 +4,7 @@ import pandas as pd
 import openpyxl
 from openpyxl.styles import Font
 
-TEMPLATE_PATH = 'ledger_format.xlsx'
+TEMPLATE_PATH = 'templates/ledger_format.xlsx'
 LEDGER_PATH = 'ledger.xlsx'
 SOURCE_HEADER_ROW = 1   # 0-indexed: row 2 in Excel
 SOURCE_COLS = 'C:I'     # 월, 날짜, 내용, 이름, 비고, 입/출, 잔액
