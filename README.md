@@ -50,8 +50,8 @@ python main.py 2025-11 2026-02
 
 | 파일 | 설명 |
 |---|---|
-| `ledger_YYYYMM_YYYYMM.xlsx` | 기간별 장부 (순서 / 날짜 / 종류 / 내용 / 금액 / 잔액) |
-| `output.hwpx` | 지출 항목별 증빙 이미지가 삽입된 HWP 서류 |
+| `BCSD_YYYYMM_YYYYMM_장부.xlsx` | 기간별 장부 (순서 / 날짜 / 종류 / 내용 / 금액 / 잔액) |
+| `BCSD_YYYYMM_YYYYMM_증빙자료.hwpx` | 지출 항목별 증빙 이미지가 삽입된 HWP 서류 |
 
 또한 `LEDGER_PATH`로 지정된 장부 Excel의 첫 번째 시트가 해당 기간 데이터로 덮어쓰여집니다.
 

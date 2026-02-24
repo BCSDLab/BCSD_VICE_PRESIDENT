@@ -12,7 +12,6 @@ OUTPUT_DIR        = 'output'
 IMAGE_DIR         = 'receipt_images'
 LEDGER_PATH       = os.getenv('LEDGER_PATH',       'ledger.xlsx')
 HWP_TEMPLATE      = os.getenv('HWP_TEMPLATE_PATH', 'evid_format.hwpx')
-HWP_OUTPUT        = os.getenv('HWP_OUTPUT_PATH',   'output.hwpx')
 MEMBERSHIP_SOURCE = os.getenv('MEMBERSHIP_SOURCE')
 
 HEADER_ROW     = 0
@@ -30,11 +29,9 @@ def main():
 
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-    ledger_output = os.path.join(
-        OUTPUT_DIR,
-        f'ledger_{args.start.replace("-", "")}_{args.end.replace("-", "")}.xlsx'
-    )
-    hwp_output = os.path.join(OUTPUT_DIR, os.path.basename(HWP_OUTPUT))
+    period = f'{args.start.replace("-", "")}_{args.end.replace("-", "")}'
+    ledger_output = os.path.join(OUTPUT_DIR, f'BCSD_{period}_장부.xlsx')
+    hwp_output    = os.path.join(OUTPUT_DIR, f'BCSD_{period}_증빙자료.hwpx')
 
     mfp.run(MEMBERSHIP_SOURCE, args.start, args.end,
             output_path=ledger_output, ledger_path=LEDGER_PATH)
