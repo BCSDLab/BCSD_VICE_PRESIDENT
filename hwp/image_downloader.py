@@ -104,20 +104,19 @@ def _download(urls, dir, prefix):
     return paths
 
 def run(data, img_dir):
+    os.makedirs(img_dir, exist_ok=True)
+    all_files = os.listdir(img_dir)
     img_paths_list = []
 
-    if os.path.exists(img_dir):
-        all_files = os.listdir(img_dir)
-        for idx, row in data.iterrows():
-            prefix = f"row_{idx + 1}_"
-            row_imgs = sorted([os.path.join(img_dir, f) for f in all_files if f.startswith(prefix)])
-            img_paths_list.append(row_imgs)
-    else:
-        os.makedirs(img_dir, exist_ok=True)
-        for idx, row in data.iterrows():
+    for idx, row in data.iterrows():
+        prefix = f"row_{idx + 1}_"
+        cached = sorted([os.path.join(img_dir, f) for f in all_files if f.startswith(prefix)])
+        if cached:
+            img_paths_list.append(cached)
+        else:
             urls = _get_urls(row['링크'])
-            paths = _download(urls, img_dir, prefix=f"row_{idx + 1}")
+            paths = _download(urls, img_dir, prefix=prefix)
             img_paths_list.append(paths)
-    
+
     data['img_paths'] = img_paths_list
     return data
