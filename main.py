@@ -1,7 +1,6 @@
 import os
 import argparse
 from dotenv import load_dotenv
-from ledger.excel_parser import parse
 from ledger import membership_fee_parser as mfp
 import hwp.image_downloader as imgd
 import hwp.hwp_generator as hwpg
@@ -11,11 +10,7 @@ load_dotenv()
 OUTPUT_DIR        = 'output'
 IMAGE_DIR         = 'receipt_images'
 HWP_TEMPLATE      = 'templates/evid_format.hwpx'
-LEDGER_PATH       = os.getenv('LEDGER_PATH',       'ledger.xlsx')
 MEMBERSHIP_SOURCE = os.getenv('MEMBERSHIP_SOURCE')
-
-HEADER_ROW     = 0
-DATA_START_ROW = 1
 
 
 def main():
@@ -33,15 +28,15 @@ def main():
     ledger_output = os.path.join(OUTPUT_DIR, f'BCSD_{period}_장부.xlsx')
     hwp_output    = os.path.join(OUTPUT_DIR, f'BCSD_{period}_증빙자료.hwpx')
 
-    mfp.run(MEMBERSHIP_SOURCE, args.start, args.end,
-            output_path=ledger_output, ledger_path=LEDGER_PATH)
-
-    data = parse(LEDGER_PATH, HEADER_ROW, DATA_START_ROW)
-    if data.empty:
-        print("empty data")
+    df = mfp.run(MEMBERSHIP_SOURCE, args.start, args.end, output_path=ledger_output)
+    if df is None:
         return
 
-    data_with_paths = imgd.run(data, IMAGE_DIR)
+    expenses = df[df['입/출'] < 0].copy().reset_index(drop=True)
+    expenses['종류'] = expenses['내용']
+    expenses['링크'] = None
+
+    data_with_paths = imgd.run(expenses, IMAGE_DIR)
     hwpg.run(data_with_paths, HWP_TEMPLATE, hwp_output)
     print('done')
 

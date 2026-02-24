@@ -5,7 +5,6 @@ import openpyxl
 from openpyxl.styles import Font
 
 TEMPLATE_PATH = 'templates/ledger_format.xlsx'
-LEDGER_PATH = 'ledger.xlsx'
 SOURCE_HEADER_ROW = 1   # 0-indexed: row 2 in Excel
 SOURCE_COLS = 'C:I'     # 월, 날짜, 내용, 이름, 비고, 입/출, 잔액
 
@@ -90,28 +89,7 @@ def write_to_ledger(df, template_path, output_path, start_ym, end_ym):
     print(f"저장 완료: {output_path} ({len(df)}개 행)")
 
 
-def update_ledger_sheet1(df, ledger_path):
-    """ledger.xlsx의 Sheet1을 필터링된 데이터로 덮어씀.
-    Sheet1 형식: 날짜 | 종류(내용) | 금액(부호 포함) | 잔액
-    """
-    wb = openpyxl.load_workbook(ledger_path)
-    ws = wb['Sheet1']
-
-    # 헤더(1행) 제외하고 기존 데이터 초기화
-    _clear_data_rows(ws, 2)
-
-    for i, row in df.iterrows():
-        excel_row = 2 + i
-        ws.cell(row=excel_row, column=1, value=str(row['날짜']))
-        ws.cell(row=excel_row, column=2, value=str(row['내용']))
-        ws.cell(row=excel_row, column=3, value=row['입/출'])
-        ws.cell(row=excel_row, column=4, value=row['잔액'])
-
-    wb.save(ledger_path)
-    print(f"ledger.xlsx Sheet1 업데이트 완료 ({len(df)}개 행)")
-
-
-def run(source_path, start, end, output_path=None, template_path=None, ledger_path=None):
+def run(source_path, start, end, output_path=None, template_path=None):
     start_ym = _parse_period(start)
     end_ym = _parse_period(end)
 
@@ -126,10 +104,10 @@ def run(source_path, start, end, output_path=None, template_path=None, ledger_pa
 
     if df_filtered.empty:
         print(f"경고: {start}~{end} 범위의 데이터가 없습니다.")
-        return
+        return None
 
     write_to_ledger(df_filtered, template_path or TEMPLATE_PATH, output_path, start_ym, end_ym)
-    update_ledger_sheet1(df_filtered, ledger_path or LEDGER_PATH)
+    return df_filtered
 
 
 if __name__ == '__main__':

@@ -23,8 +23,6 @@ cp .env.example .env
 
 | 변수 | 설명 |
 |---|---|
-| `LEDGER_PATH` | 장부 Excel 파일 경로 |
-| `HWP_OUTPUT_PATH` | HWP 출력 파일명 |
 | `MEMBERSHIP_SOURCE` | 재학생 회비 관리 문서 Excel 파일 경로 |
 | `DEBUG` | `True`면 HWP 창을 화면에 표시 |
 | `GOOGLE_SECRET_JSON` | Google 서비스 계정 JSON 파일 경로 |
@@ -52,15 +50,11 @@ python main.py 2025-11 2026-02
 | `BCSD_YYYYMM_YYYYMM_장부.xlsx` | 기간별 장부 (순서 / 날짜 / 종류 / 내용 / 금액 / 잔액) |
 | `BCSD_YYYYMM_YYYYMM_증빙자료.hwpx` | 지출 항목별 증빙 이미지가 삽입된 HWP 서류 |
 
-또한 `LEDGER_PATH`로 지정된 장부 Excel의 첫 번째 시트가 해당 기간 데이터로 덮어쓰여집니다.
-
 ## 프로젝트 구조
 
 ```
 ├── main.py                        # 진입점
-├── utils.py                       # Google URL 변환 유틸
 ├── ledger/
-│   ├── excel_parser.py            # 장부 Excel 파싱 (지출 필터링)
 │   └── membership_fee_parser.py   # 재학생 회비 관리 문서 → 장부 변환
 └── hwp/
     ├── hwp_generator.py           # HWP 증빙 서류 생성
