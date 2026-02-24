@@ -96,7 +96,7 @@ def write_to_ledger(df, template_path, output_path, start_ym, end_ym):
 
         cells = [
             ws.cell(row=excel_row, column=2, value=i + 1),
-            ws.cell(row=excel_row, column=3, value=str(row['날짜'])),
+            ws.cell(row=excel_row, column=3, value=re.match(r'\d{4}\.\d{2}\.\d{2}', str(row['날짜'])).group()),
             ws.cell(row=excel_row, column=4, value=종류),
             ws.cell(row=excel_row, column=5, value=str(row['내용'])),
             ws.cell(row=excel_row, column=6, value=abs(amount)),
