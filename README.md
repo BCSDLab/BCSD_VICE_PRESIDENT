@@ -23,7 +23,6 @@ cp .env.example .env
 
 | 변수 | 설명 |
 |---|---|
-| `MEMBERSHIP_SOURCE` | 재학생 회비 관리 문서 Excel 파일 경로 |
 | `DEBUG` | `True`면 HWP 창을 화면에 표시 |
 | `GOOGLE_SECRET_JSON` | Google 서비스 계정 JSON 파일 경로 |
 
@@ -32,13 +31,13 @@ cp .env.example .env
 ## 사용법
 
 ```bash
-python main.py <시작기간> <종료기간>
+python main.py <파일경로> <시작기간> <종료기간>
 ```
 
 **예시 — 2025년 11월 ~ 2026년 2월 장부 생성:**
 
 ```bash
-python main.py 2025-11 2026-02
+python main.py "재학생 회비 관리 문서_20260225.xlsx" 2025-11 2026-02
 ```
 
 ## 출력 결과
