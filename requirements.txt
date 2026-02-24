@@ -1,5 +1,5 @@
 requests
-#pyhwpx
+pyhwpx
 pandas
 openpyxl
 python-dotenv
