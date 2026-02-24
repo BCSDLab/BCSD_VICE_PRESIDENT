@@ -1,9 +1,8 @@
 import os
+import sys
 import argparse
 from dotenv import load_dotenv
 from ledger import membership_fee_parser as mfp
-import hwp.image_downloader as imgd
-import hwp.hwp_generator as hwpg
 
 load_dotenv()
 
@@ -40,6 +39,13 @@ def main():
     expenses['종류'] = expenses['내용']
     expenses['링크'] = None
     print(f"      → 지출 {len(expenses)}건 증빙 서류 생성 대상")
+
+    if sys.platform != 'win32':
+        print("Windows 환경이 아니어서 HWP 생성을 건너뜁니다.")
+        return
+
+    import hwp.image_downloader as imgd
+    import hwp.hwp_generator as hwpg
 
     print(f"[2/3] 이미지 다운로드 중...")
     data_with_paths = imgd.run(expenses, IMAGE_DIR)
