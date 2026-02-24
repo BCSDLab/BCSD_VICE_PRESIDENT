@@ -1,5 +1,5 @@
 requests
-pyhwpx
+#pyhwpx
 pandas
 openpyxl
 google-api-python-client
