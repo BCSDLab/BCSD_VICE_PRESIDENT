@@ -40,14 +40,12 @@ def parse_source(file_path):
 
         links = []
         for row in ws.iter_rows(min_row=data_start_row):
-            if row[3].value is None:  # D열(날짜) None이면 스킵
-                continue
             content_cell = row[4]    # E열(내용)
             link = content_cell.hyperlink.target if content_cell.hyperlink else None
             links.append(link)
 
+        df['링크'] = links[:len(df)]
         df_clean = df.dropna(subset=['날짜']).reset_index(drop=True)
-        df_clean['링크'] = links[:len(df_clean)]
         frames.append(df_clean)
 
     if not frames:
