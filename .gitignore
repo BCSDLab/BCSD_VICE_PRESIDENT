@@ -4,5 +4,4 @@
 __pycache__/
 *.pyc
 receipt_images/
-output.hwpx
-ledger_*.xlsx
+output/

@@ -8,6 +8,7 @@ import hwp.hwp_generator as hwpg
 
 load_dotenv()
 
+OUTPUT_DIR        = os.getenv('OUTPUT_DIR',        'output')
 LEDGER_PATH       = os.getenv('LEDGER_PATH',       'ledger.xlsx')
 HWP_TEMPLATE      = os.getenv('HWP_TEMPLATE_PATH', 'evid_format.hwpx')
 HWP_OUTPUT        = os.getenv('HWP_OUTPUT_PATH',   'output.hwpx')
@@ -27,8 +28,16 @@ def main():
     if not MEMBERSHIP_SOURCE:
         raise EnvironmentError("MEMBERSHIP_SOURCE가 .env에 설정되지 않았습니다.")
 
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+    ledger_output = os.path.join(
+        OUTPUT_DIR,
+        f'ledger_{args.start.replace("-", "")}_{args.end.replace("-", "")}.xlsx'
+    )
+    hwp_output = os.path.join(OUTPUT_DIR, os.path.basename(HWP_OUTPUT))
+
     mfp.run(MEMBERSHIP_SOURCE, args.start, args.end,
-            ledger_path=LEDGER_PATH)
+            output_path=ledger_output, ledger_path=LEDGER_PATH)
 
     data = parse(LEDGER_PATH, HEADER_ROW, DATA_START_ROW)
     if data.empty:
@@ -36,7 +45,7 @@ def main():
         return
 
     data_with_paths = imgd.run(data, IMAGE_DIR)
-    hwpg.run(data_with_paths, HWP_TEMPLATE, HWP_OUTPUT)
+    hwpg.run(data_with_paths, HWP_TEMPLATE, hwp_output)
     print('done')
 
 
