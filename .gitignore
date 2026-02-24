@@ -5,5 +5,7 @@ __pycache__/
 *.pyc
 receipt_images/
 output/
-templates/
+templates/*.hwp
+templates/*.hwpx
+templates/*.xlsx
 *.json

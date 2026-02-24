@@ -21,7 +21,7 @@ import openpyxl
 
 EXCEL_FILE_PATTERN = "재학생 회비 납부 문서_*.xlsx"
 EXCEL_FILE_PREFIX = "재학생 회비 납부 문서_"
-TEMPLATE_FILE = "fee_checker/fee_notice.md"
+TEMPLATE_FILE = "templates/fee_notice.md"
 OUTPUT_BASE_DIR = "output"
 
 # 제외 키워드 (비고 열에서 검사)

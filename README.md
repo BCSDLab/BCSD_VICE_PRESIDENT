@@ -98,7 +98,8 @@ python fee_check.py -e "Back-End,Android,Design"
 │   ├── hwp_generator.py           # HWP 증빙 서류 생성
 │   ├── image_downloader.py        # Google Drive 이미지 다운로드
 │   └── image_packer.py            # HWP 테이블 셀 이미지 배치
-└── fee_checker/
-    ├── checker.py                 # 회비 미납자 확인 로직
-    └── fee_notice.md              # 미납 알림 메시지 템플릿
+├── fee_checker/
+│   └── checker.py                 # 회비 미납자 확인 로직
+└── templates/
+    └── fee_notice.md              # 미납 알림 메시지 템플릿 (한글·엑셀 파일은 gitignore)
 ```
