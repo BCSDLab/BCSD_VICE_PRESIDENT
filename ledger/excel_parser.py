@@ -1,6 +1,6 @@
 import pandas as pd
 import openpyxl
-from utils import convert_to_doc_url
+from utils import convert_to_doc_url  # noqa: E402 (루트 경로)
 
 def _load(file, header):
     return pd.read_excel(file, header=header)

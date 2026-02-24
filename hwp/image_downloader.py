@@ -2,7 +2,7 @@ import os
 import requests
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
-from config import GOOGLE_SECRET_JSON
+from config import GOOGLE_SECRET_JSON  # noqa: E402 (루트 경로)
 from urllib.parse import urlparse, parse_qs
 
 _credentials = service_account.Credentials.from_service_account_file(

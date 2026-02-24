@@ -1,6 +1,6 @@
 import sys
 from pyhwpx import Hwp
-from image_packer import pack
+from hwp.image_packer import pack
 from config import DEBUG
 
 def run(data, t_path, o_path):
