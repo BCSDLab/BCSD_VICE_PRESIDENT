@@ -18,15 +18,21 @@ _credentials = service_account.Credentials.from_service_account_file(
 _docs_service = build('docs', 'v1', credentials=_credentials)
 _drive_service = build('drive', 'v3', credentials=_credentials)
 
-def _get_urls(url):
-    if not url: return []
+def _extract_id(url):
+    """URL에서 Drive 파일 ID 추출"""
+    if '/d/' in url:
+        return url.split('/d/')[1].split('/')[0]
+    if 'id=' in url:
+        return parse_qs(urlparse(url).query).get('id', [None])[0]
+    return None
 
-    """Google Docs API로 이미지 URL 추출"""
-    doc_id = url.split('/d/')[1].split('/')[0]
+
+def _get_urls_from_doc(doc_id):
+    """Google Docs API로 문서에서 이미지 URL 추출"""
     doc = _docs_service.documents().get(documentId=doc_id).execute()
     urls = []
-    
-    # 인라인 객체에서 이미지 추출 (Drive 링크 삽입 이미지는 sourceUri, 직접 업로드는 contentUri)
+
+    # 인라인 객체에서 이미지 추출 (Drive 링크 삽입은 sourceUri, 직접 업로드는 contentUri)
     for obj in doc.get('inlineObjects', {}).values():
         props = (obj.get('inlineObjectProperties', {})
                     .get('embeddedObject', {})
@@ -37,15 +43,31 @@ def _get_urls(url):
             urls.append(source_uri)
         elif content_uri:
             urls.append(content_uri)
-        
+
     # 텍스트 링크
     for elem in doc.get('body', {}).get('content', []):
         for para_elem in elem.get('paragraph', {}).get('elements', []):
             link = para_elem.get('textRun', {}).get('textStyle', {}).get('link', {}).get('url')
             if link and 'drive.google.com' in link:
                 urls.append(link)
-    
+
     return urls
+
+
+def _get_urls(url):
+    if not url: return []
+
+    file_id = _extract_id(url)
+
+    # Drive 직접 링크인 경우 MIME 타입 확인
+    if file_id and 'docs.google.com' not in url:
+        mime = _drive_service.files().get(fileId=file_id, fields='mimeType').execute().get('mimeType', '')
+        if mime == 'application/vnd.google-apps.document':
+            return _get_urls_from_doc(file_id)
+        return [url]  # 이미지 등 바이너리 파일
+
+    if not file_id: return []
+    return _get_urls_from_doc(file_id)
 
 def _download(urls, dir, prefix):
     """Google Drive API로 고화질 다운로드"""
