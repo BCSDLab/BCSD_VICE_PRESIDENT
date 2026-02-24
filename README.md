@@ -93,11 +93,10 @@ python fee_check.py -e "Back-End,Android,Design"
 ├── fee_check.py                   # 회비 미납자 확인 진입점
 ├── ledger/
 │   ├── membership_fee_parser.py   # 재학생 회비 관리 문서 → 장부 변환
-│   └── utils.py                   # URL 유틸리티
-├── hwp/
-│   ├── hwp_generator.py           # HWP 증빙 서류 생성
-│   ├── image_downloader.py        # Google Drive 이미지 다운로드
-│   └── image_packer.py            # HWP 테이블 셀 이미지 배치
+│   └── hwp/
+│       ├── hwp_generator.py       # HWP 증빙 서류 생성
+│       ├── image_downloader.py    # Google Drive 이미지 다운로드
+│       └── image_packer.py        # HWP 테이블 셀 이미지 배치
 ├── fee_checker/
 │   └── checker.py                 # 회비 미납자 확인 로직
 └── templates/

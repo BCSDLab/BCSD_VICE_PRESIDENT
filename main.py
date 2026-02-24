@@ -43,8 +43,8 @@ def main():
         print("Windows 환경이 아니어서 HWP 생성을 건너뜁니다.")
         return
 
-    import hwp.image_downloader as imgd
-    import hwp.hwp_generator as hwpg
+    import ledger.hwp.image_downloader as imgd
+    import ledger.hwp.hwp_generator as hwpg
 
     print(f"[2/3] 이미지 다운로드 중...")
     data_with_paths = imgd.run(expenses, IMAGE_DIR)

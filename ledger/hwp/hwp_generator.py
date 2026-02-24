@@ -2,7 +2,7 @@ import os
 import sys
 from dotenv import load_dotenv
 from pyhwpx import Hwp
-from hwp.image_packer import pack
+from ledger.hwp.image_packer import pack
 
 load_dotenv()
 DEBUG = os.getenv('DEBUG', 'True').lower() == 'true'
