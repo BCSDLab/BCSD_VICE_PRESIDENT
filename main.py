@@ -9,7 +9,10 @@ load_dotenv()
 
 OUTPUT_DIR        = 'output'
 IMAGE_DIR         = 'receipt_images'
-HWP_TEMPLATE      = 'templates/evid_format.hwpx'
+HWP_TEMPLATE      = next(
+    (f'templates/{f}' for f in os.listdir('templates') if f.startswith('evid_format')),
+    'templates/evid_format.hwpx'
+)
 def main():
     parser = argparse.ArgumentParser(description='BCSD 부회장 회계 자동화')
     parser.add_argument('source', help='재학생 회비 관리 문서 파일 경로')
@@ -21,7 +24,8 @@ def main():
 
     period = f'{args.start.replace("-", "")}_{args.end.replace("-", "")}'
     ledger_output = os.path.join(OUTPUT_DIR, f'BCSD_{period}_장부.xlsx')
-    hwp_output    = os.path.join(OUTPUT_DIR, f'BCSD_{period}_증빙자료.hwpx')
+    hwp_ext       = os.path.splitext(HWP_TEMPLATE)[1]
+    hwp_output    = os.path.join(OUTPUT_DIR, f'BCSD_{period}_증빙자료{hwp_ext}')
 
     print(f"[1/3] 장부 파싱 중... ({args.source})")
     df = mfp.run(args.source, args.start, args.end, output_path=ledger_output)
