@@ -24,7 +24,6 @@ cp .env.example .env
 | 변수 | 설명 |
 |---|---|
 | `LEDGER_PATH` | 장부 Excel 파일 경로 |
-| `HWP_TEMPLATE_PATH` | HWP 증빙 서류 템플릿 파일 경로 (기본: `templates/evid_format.hwpx`) |
 | `HWP_OUTPUT_PATH` | HWP 출력 파일명 |
 | `MEMBERSHIP_SOURCE` | 재학생 회비 관리 문서 Excel 파일 경로 |
 | `DEBUG` | `True`면 HWP 창을 화면에 표시 |

@@ -10,8 +10,8 @@ load_dotenv()
 
 OUTPUT_DIR        = 'output'
 IMAGE_DIR         = 'receipt_images'
+HWP_TEMPLATE      = 'templates/evid_format.hwpx'
 LEDGER_PATH       = os.getenv('LEDGER_PATH',       'ledger.xlsx')
-HWP_TEMPLATE      = os.getenv('HWP_TEMPLATE_PATH', 'evid_format.hwpx')
 MEMBERSHIP_SOURCE = os.getenv('MEMBERSHIP_SOURCE')
 
 HEADER_ROW     = 0
