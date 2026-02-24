@@ -86,7 +86,7 @@ def write_to_ledger(df, template_path, output_path, start_ym, end_ym):
             cell.font = font
 
     wb.save(output_path)
-    print(f"저장 완료: {output_path} ({len(df)}개 행)")
+    print(f"      → 장부 저장: {output_path}")
 
 
 def run(source_path, start, end, output_path=None, template_path=None):

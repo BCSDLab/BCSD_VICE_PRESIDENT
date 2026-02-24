@@ -23,17 +23,23 @@ def main():
     ledger_output = os.path.join(OUTPUT_DIR, f'BCSD_{period}_장부.xlsx')
     hwp_output    = os.path.join(OUTPUT_DIR, f'BCSD_{period}_증빙자료.hwpx')
 
+    print(f"[1/3] 장부 파싱 중... ({args.source})")
     df = mfp.run(args.source, args.start, args.end, output_path=ledger_output)
     if df is None:
         return
+    print(f"      → {len(df)}건 ({ledger_output})")
 
     expenses = df[df['입/출'] < 0].copy().reset_index(drop=True)
     expenses['종류'] = expenses['내용']
     expenses['링크'] = None
+    print(f"      → 지출 {len(expenses)}건 증빙 서류 생성 대상")
 
+    print(f"[2/3] 이미지 다운로드 중...")
     data_with_paths = imgd.run(expenses, IMAGE_DIR)
+
+    print(f"[3/3] HWP 생성 중... ({hwp_output})")
     hwpg.run(data_with_paths, HWP_TEMPLATE, hwp_output)
-    print('done')
+    print("완료")
 
 
 if __name__ == '__main__':
