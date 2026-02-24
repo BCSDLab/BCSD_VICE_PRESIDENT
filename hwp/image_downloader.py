@@ -1,12 +1,15 @@
 import os
 import requests
+from dotenv import load_dotenv
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
-from config import GOOGLE_SECRET_JSON  # noqa: E402 (루트 경로)
 from urllib.parse import urlparse, parse_qs
 
+load_dotenv()
+_GOOGLE_SECRET_JSON = os.getenv('GOOGLE_SECRET_JSON')
+
 _credentials = service_account.Credentials.from_service_account_file(
-    GOOGLE_SECRET_JSON,
+    _GOOGLE_SECRET_JSON,
     scopes=[
         'https://www.googleapis.com/auth/documents.readonly',
         'https://www.googleapis.com/auth/drive.readonly'

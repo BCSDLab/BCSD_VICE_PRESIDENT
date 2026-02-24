@@ -1,2 +1,0 @@
-DEBUG = True
-GOOGLE_SECRET_JSON = "bcsdlab-internal-38556306c01c.json"
