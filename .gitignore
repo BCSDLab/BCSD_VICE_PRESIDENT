@@ -5,3 +5,4 @@ __pycache__/
 *.pyc
 receipt_images/
 output/
+*.json
