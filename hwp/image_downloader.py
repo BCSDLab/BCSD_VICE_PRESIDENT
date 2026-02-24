@@ -26,15 +26,17 @@ def _get_urls(url):
     doc = _docs_service.documents().get(documentId=doc_id).execute()
     urls = []
     
-    # 인라인 객체에서 이미지 추출
+    # 인라인 객체에서 이미지 추출 (Drive 링크 삽입 이미지는 sourceUri, 직접 업로드는 contentUri)
     for obj in doc.get('inlineObjects', {}).values():
-            uri = (
-                obj.get('inlineObjectProperties', {})
-                   .get('embeddedObject', {})
-                   .get('imageProperties', {})
-                   .get('contentUri')
-                )
-            if uri: urls.append(uri)
+        props = (obj.get('inlineObjectProperties', {})
+                    .get('embeddedObject', {})
+                    .get('imageProperties', {}))
+        source_uri = props.get('sourceUri')
+        content_uri = props.get('contentUri')
+        if source_uri and 'drive.google.com' in source_uri:
+            urls.append(source_uri)
+        elif content_uri:
+            urls.append(content_uri)
         
     # 텍스트 링크
     for elem in doc.get('body', {}).get('content', []):
