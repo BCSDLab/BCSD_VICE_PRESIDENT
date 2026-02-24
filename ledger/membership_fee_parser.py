@@ -35,6 +35,9 @@ def parse_source(file_path):
         if not year_pattern.match(name):
             continue
 
+        if '날짜' not in df.columns:
+            continue
+
         ws = wb[name]
         data_start_row = SOURCE_HEADER_ROW + 2  # 1-indexed: header=row2, data=row3
 
