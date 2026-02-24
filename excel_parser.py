@@ -1,5 +1,6 @@
 import pandas as pd
 import openpyxl
+from utils import convert_to_doc_url
 
 def _load(file, header):
     return pd.read_excel(file, header=header)
@@ -11,7 +12,7 @@ def _get_links(file, num_rows, start_row):
 
     for i in range(start_row + 1, start_row + 1 + num_rows):
         cell = sheet[f'B{i}']
-        links.append(cell.hyperlink.target if cell.hyperlink else None)
+        links.append(convert_to_doc_url(cell.hyperlink.target) if cell.hyperlink else None)
 
     return links
 
