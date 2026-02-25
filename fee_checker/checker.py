@@ -209,6 +209,8 @@ def _validate_identifier(value):
 
 def _normalize_track(track):
     """트랙명 정규화: 영문자만 추출 후 소문자 변환 (예: 'FrontEnd' → 'frontend')"""
+    if not track:
+        return ""
     return re.sub(r'[^a-zA-Z]', '', track).lower()
 
 
@@ -288,8 +290,10 @@ def _db_connection():
     db_user = os.getenv("DB_USER", "")
     db_password = os.getenv("DB_PASSWORD", "")
 
-    assert ssh_host, "SSH_HOST 환경 변수가 설정되지 않았습니다."
-    assert ssh_user, "SSH_USER 환경 변수가 설정되지 않았습니다."
+    if not ssh_host:
+        raise ValueError("SSH_HOST 환경 변수가 설정되지 않았습니다.")
+    if not ssh_user:
+        raise ValueError("SSH_USER 환경 변수가 설정되지 않았습니다.")
 
     with _ssh_tunnel(ssh_host, ssh_port, ssh_user, db_host, db_port, ssh_key_path, ssh_password) as local_port:
         conn = pymysql.connect(
@@ -316,8 +320,10 @@ def fetch_slack_id_map():
     track_col_id   = _validate_identifier(os.getenv("DB_TRACK_COL_ID", "id"))
     track_col_name = _validate_identifier(os.getenv("DB_TRACK_COL_NAME", "name"))
 
-    assert table, "DB_TABLE 환경 변수가 설정되지 않았습니다."
-    assert track_table, "DB_TRACK_TABLE 환경 변수가 설정되지 않았습니다."
+    if not table:
+        raise ValueError("DB_TABLE 환경 변수가 설정되지 않았습니다.")
+    if not track_table:
+        raise ValueError("DB_TRACK_TABLE 환경 변수가 설정되지 않았습니다.")
 
     with _db_connection() as conn:
         with conn.cursor() as cur:
