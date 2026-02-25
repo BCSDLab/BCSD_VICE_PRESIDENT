@@ -493,6 +493,7 @@ def generate_message_files(unpaid_data, output_dir, template_path):
 
     sender_name = os.getenv("SENDER_NAME", "")
     sender_phone = os.getenv("SENDER_PHONE", "")
+    fee_sheet_url = os.getenv("FEE_SHEET_URL", "")
 
     for (name, track), data in unpaid_data.items():
         unpaid_amount = data["unpaid_amount"]
@@ -503,6 +504,7 @@ def generate_message_files(unpaid_data, output_dir, template_path):
         message = message.replace("{멘션}", f"@{sender_name}" if sender_name else "{멘션}")
         message = message.replace("{이름}", name)
         message = message.replace("{금액}", formatted_amount)
+        message = message.replace("{납부문서URL}", fee_sheet_url)
         message = message.replace("{year}", str(last_day.year))
         message = message.replace("{month}", str(last_day.month))
         message = message.replace("{day}", str(last_day.day))
@@ -542,6 +544,7 @@ def send_slack_dms(unpaid_data, template_path):
 
     sender_name = os.getenv("SENDER_NAME", "")
     sender_phone = os.getenv("SENDER_PHONE", "")
+    fee_sheet_url = os.getenv("FEE_SHEET_URL", "")
     if not sender_name:
         raise ValueError("SENDER_NAME 환경 변수가 설정되지 않았습니다.")
     if not sender_phone:
@@ -574,6 +577,7 @@ def send_slack_dms(unpaid_data, template_path):
         message = message.replace("{이름}", name)
         message = message.replace("{멘션}", f"<@{sender_id}>")
         message = message.replace("{금액}", formatted_amount)
+        message = message.replace("{납부문서URL}", fee_sheet_url)
         message = message.replace("{year}", str(last_day.year))
         message = message.replace("{month}", str(last_day.month))
         message = message.replace("{day}", str(last_day.day))

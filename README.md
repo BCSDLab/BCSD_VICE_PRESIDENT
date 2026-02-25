@@ -72,6 +72,7 @@ python main.py "재학생 회비 관리 문서_20260225.xlsx" 2025-11 2026-02
 | `SLACK_SENDER_ID` | 발신자(본인) Slack user_id |
 | `SENDER_NAME` | 발신자 이름 (메시지 서명에 사용) |
 | `SENDER_PHONE` | 발신자 전화번호 (메시지 문의처에 사용) |
+| `FEE_SHEET_URL` | 납부 문서 URL (메시지 내 하이퍼링크에 사용) |
 | `SSH_HOST` | SSH 서버 호스트 |
 | `SSH_PORT` | SSH 포트 (기본값: `22`) |
 | `SSH_USER` | SSH 사용자명 |
