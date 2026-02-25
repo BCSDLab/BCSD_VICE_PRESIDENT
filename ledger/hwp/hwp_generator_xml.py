@@ -337,9 +337,9 @@ def run(data, t_path: str, o_path: str):
     z           = _max_z_order(root) + 1
     new_binaries: dict[str, bytes] = {}
 
-    # 6. 지출 행마다 표 생성 (enumerate로 1-based 순번 보장)
-    for seq, (_, row) in enumerate(data.iterrows(), start=1):
-        title     = f'{seq}. {row["종류"]}'
+    # 6. 지출 행마다 표 생성 (data_idx = 장부 전체 기준 0-based 인덱스 → +1이 장부 순번)
+    for data_idx, row in data.iterrows():
+        title     = f'{data_idx + 1}. {row["종류"]}'
         img_paths = row.get('img_paths', []) or []
 
         img_rows: list[list] = []
@@ -370,9 +370,9 @@ def run(data, t_path: str, o_path: str):
                     if row_items:
                         img_rows.append(row_items)
             else:
-                print(f"  [{seq}] 레이아웃 계산 실패 — 이미지 셀 비워둠")
+                print(f"  [{data_idx + 1}] 레이아웃 계산 실패 — 이미지 셀 비워둠")
         else:
-            print(f"  [{seq}] 증빙 자료 누락 — 확인 필요")
+            print(f"  [{data_idx + 1}] 증빙 자료 누락 — 확인 필요")
 
         tbl_elem, z = _build_table(title, img_rows, z)
 
