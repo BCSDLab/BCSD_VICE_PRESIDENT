@@ -8,6 +8,7 @@ section0.xml을 파싱·수정한 뒤 다시 패킹한다.
 import itertools
 import os
 import zipfile
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from lxml import etree
 from PIL import Image, UnidentifiedImageError
@@ -77,16 +78,10 @@ class _TemplateParams:
 
 # ── 헬퍼 함수 ─────────────────────────────────────────────────────────
 
-# run() 시작 시 리셋되는 순차 ID 카운터 (다중 호출 간 결정론적 ID 보장)
-_id_counter = itertools.count(100_000_000)
-
-def _next_id() -> int:
-    return next(_id_counter)
-
-
-def _reset_id_counter() -> None:
-    global _id_counter
-    _id_counter = itertools.count(100_000_000)
+def _make_next_id(start: int = 100_000_000) -> Callable[[], int]:
+    """run() 호출마다 독립적인 순차 ID 생성기를 반환한다."""
+    counter = itertools.count(start)
+    return lambda: next(counter)
 
 
 def _max_binary_idx(zip_files: dict) -> int:
@@ -191,6 +186,12 @@ def _read_template_params(expense_ps: list) -> _TemplateParams:
 
     추출에 실패한 항목은 _TemplateParams 기본값을 유지한다.
     """
+    def _int_or(value: str | None, default: int) -> int:
+        try:
+            return int(value) if value not in (None, '') else default
+        except (TypeError, ValueError):
+            return default
+
     p = _TemplateParams()
     if not expense_ps:
         return p
@@ -219,11 +220,11 @@ def _read_template_params(expense_ps: list) -> _TemplateParams:
 
     tbl_pos = tbl.find(f'{{{HP}}}pos')
     if tbl_pos is not None:
-        p.vert_offset = int(tbl_pos.get('vertOffset', p.vert_offset))
+        p.vert_offset = _int_or(tbl_pos.get('vertOffset'), p.vert_offset)
 
     tbl_out = tbl.find(f'{{{HP}}}outMargin')
     if tbl_out is not None:
-        p.out_margin = int(tbl_out.get('bottom', p.out_margin))
+        p.out_margin = _int_or(tbl_out.get('bottom'), p.out_margin)
 
     # ── 행별 셀 크기·스타일 ───────────────────────────────────────────
     rows = tbl.findall(f'{{{HP}}}tr')
@@ -235,15 +236,15 @@ def _read_template_params(expense_ps: list) -> _TemplateParams:
             return
         csz = tc.find(f'{{{HP}}}cellSz')
         if csz is not None:
-            p.cell_w = int(csz.get('width', p.cell_w))
+            p.cell_w = _int_or(csz.get('width'), p.cell_w)
             if is_title:
-                p.title_row_h = int(csz.get('height', p.title_row_h))
+                p.title_row_h = _int_or(csz.get('height'), p.title_row_h)
             else:
-                p.img_cell_h = int(csz.get('height', p.img_cell_h))
+                p.img_cell_h = _int_or(csz.get('height'), p.img_cell_h)
         cm = tc.find(f'{{{HP}}}cellMargin')
         if cm is not None:
-            p.margin_lr = int(cm.get('left', p.margin_lr))
-            p.margin_tb = int(cm.get('top',  p.margin_tb))
+            p.margin_lr = _int_or(cm.get('left'), p.margin_lr)
+            p.margin_tb = _int_or(cm.get('top'),  p.margin_tb)
         sl = tc.find(f'{{{HP}}}subList')
         if sl is None:
             return
@@ -276,7 +277,10 @@ def _hp(parent: etree._Element, tag: str, attribs: dict | None = None) -> etree.
 
 # ── 핵심 XML 빌더 ──────────────────────────────────────────────────────
 
-def _build_pic(binary_id: str, img: Img, disp_w: int, disp_h: int, z: int) -> etree._Element:
+def _build_pic(
+    binary_id: str, img: Img, disp_w: int, disp_h: int, z: int,
+    next_id: Callable[[], int],
+) -> etree._Element:
     """인라인(treatAsChar=1) 이미지 요소를 만든다."""
     # 물리적 원본 크기: DPI 없으면 96 DPI 가정 (pyhwpx 기본값)
     with Image.open(img.path) as im:
@@ -287,7 +291,7 @@ def _build_pic(binary_id: str, img: Img, disp_w: int, disp_h: int, z: int) -> et
     org_h = round(img.h / dpi_y * 7200)
 
     pic = etree.Element(f'{{{HP}}}pic', {
-        'id':            str(_next_id()),
+        'id':            str(next_id()),
         'zOrder':        str(z),
         'numberingType': 'PICTURE',
         'textWrap':      'TOP_AND_BOTTOM',
@@ -296,7 +300,7 @@ def _build_pic(binary_id: str, img: Img, disp_w: int, disp_h: int, z: int) -> et
         'dropcapstyle':  'None',
         'href':          '',
         'groupLevel':    '0',
-        'instid':        str(_next_id()),
+        'instid':        str(next_id()),
         'reverse':       '0',
     })
 
@@ -353,7 +357,10 @@ def _build_pic(binary_id: str, img: Img, disp_w: int, disp_h: int, z: int) -> et
     return pic
 
 
-def _build_table(title: str, img_rows: list, z: int, params: _TemplateParams) -> tuple:
+def _build_table(
+    title: str, img_rows: list, z: int,
+    params: _TemplateParams, next_id: Callable[[], int],
+) -> tuple:
     """
     2행 1열 증빙 표 생성.
     img_rows: 행 리스트, 각 행 = [(binary_id, Img, disp_w_hwp, disp_h_hwp), ...]
@@ -364,7 +371,7 @@ def _build_table(title: str, img_rows: list, z: int, params: _TemplateParams) ->
     bf = params.border_fill_id
 
     tbl = etree.Element(f'{{{HP}}}tbl', {
-        'id':              str(_next_id()),
+        'id':              str(next_id()),
         'zOrder':          str(z),
         'numberingType':   'TABLE',
         'textWrap':        'TOP_AND_BOTTOM',
@@ -405,7 +412,7 @@ def _build_table(title: str, img_rows: list, z: int, params: _TemplateParams) ->
         'vertAlign': 'CENTER', 'linkListIDRef': '0', 'linkListNextIDRef': '0',
         'textWidth': '0', 'textHeight': '0', 'hasTextRef': '0', 'hasNumRef': '0',
     })
-    p1  = _hp(sl1, 'p', {'id': str(_next_id()),
+    p1  = _hp(sl1, 'p', {'id': str(next_id()),
                           'paraPrIDRef': params.title_para_pr,
                           'styleIDRef':  params.title_style_id,
                           'pageBreak': '0', 'columnBreak': '0', 'merged': '0'})
@@ -439,7 +446,7 @@ def _build_table(title: str, img_rows: list, z: int, params: _TemplateParams) ->
             run = _hp(p, 'run', {'charPrIDRef': params.img_char_pr})
             max_h = 0
             for binary_id, img, disp_w, disp_h in row:
-                run.append(_build_pic(binary_id, img, disp_w, disp_h, z))
+                run.append(_build_pic(binary_id, img, disp_w, disp_h, z, next_id))
                 z += 1
                 max_h = max(max_h, disp_h)
             lsa = _hp(p, 'linesegarray')
@@ -478,8 +485,8 @@ def run(data, t_path: str, o_path: str):
     t_path    : 템플릿 .hwpx 파일 경로
     o_path    : 출력 .hwpx 파일 경로
     """
-    # 0. ID 카운터 초기화 (다중 호출 시 결정론적 ID 보장)
-    _reset_id_counter()
+    # 0. per-run ID 생성기 (독립적인 클로저 → 동시 호출 간 ID 충돌 없음)
+    next_id = _make_next_id()
 
     # 1. 템플릿 ZIP 읽기 (.hwp 바이너리는 지원 불가)
     if not zipfile.is_zipfile(t_path):
@@ -588,7 +595,7 @@ def run(data, t_path: str, o_path: str):
         else:
             print(f"  [{data_idx + 1}] 증빙 자료 누락 — 확인 필요")
 
-        tbl_elem, z = _build_table(title, img_rows, z, params)
+        tbl_elem, z = _build_table(title, img_rows, z, params, next_id)
 
         # hp:p > hp:run > hp:tbl 구조로 래핑 (템플릿 패턴과 동일)
         p_wrap = etree.Element(f'{{{HP}}}p', {
