@@ -271,7 +271,15 @@ def run(data, t_path: str, o_path: str):
     t_path    : 템플릿 .hwpx 파일 경로
     o_path    : 출력 .hwpx 파일 경로
     """
-    # 1. 템플릿 ZIP 읽기
+    # 1. 템플릿 ZIP 읽기 (.hwp 바이너리는 지원 불가)
+    if not zipfile.is_zipfile(t_path):
+        ext = os.path.splitext(t_path)[1]
+        raise ValueError(
+            f"템플릿 파일이 HWPX 형식이 아닙니다 ({ext}).\n"
+            "HWP 바이너리 포맷은 지원하지 않습니다. "
+            "한글에서 '다른 이름으로 저장 → .hwpx'로 변환 후 다시 시도하세요."
+        )
+
     with zipfile.ZipFile(t_path, 'r') as zin:
         zip_files = {name: zin.read(name) for name in zin.namelist()}
 
