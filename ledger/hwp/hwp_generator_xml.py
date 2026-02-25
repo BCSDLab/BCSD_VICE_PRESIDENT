@@ -152,7 +152,10 @@ def _find_expense_ps(root: etree._Element) -> list:
     for p in root:
         if p.tag != f'{{{HP}}}p':
             continue
+        matched = False
         for run in p:
+            if matched:
+                break
             if run.tag != f'{{{HP}}}run':
                 continue
             for tbl in run:
@@ -177,6 +180,7 @@ def _find_expense_ps(root: etree._Element) -> list:
                 if run_el is None or run_el.find(f'{{{HP}}}t') is None:
                     continue
                 result.append(p)
+                matched = True
                 break
     return result
 
@@ -445,7 +449,7 @@ def _build_table(
     img_horzsize = params.title_lineseg.get('horzsize', '50856')
     if img_rows:
         for row in img_rows:
-            p = _hp(sl2, 'p', {'id': '0',
+            p = _hp(sl2, 'p', {'id': str(next_id()),
                                 'paraPrIDRef': params.img_para_pr,
                                 'styleIDRef':  params.img_style_id,
                                 'pageBreak': '0', 'columnBreak': '0', 'merged': '0'})
@@ -463,7 +467,7 @@ def _build_table(
                 'horzpos': '0', 'horzsize': img_horzsize, 'flags': '393216',
             })
     else:
-        p = _hp(sl2, 'p', {'id': '0',
+        p = _hp(sl2, 'p', {'id': str(next_id()),
                             'paraPrIDRef': params.img_para_pr,
                             'styleIDRef':  params.img_style_id,
                             'pageBreak': '0', 'columnBreak': '0', 'merged': '0'})
@@ -605,7 +609,7 @@ def run(data, t_path: str, o_path: str):
 
         # hp:p > hp:run > hp:tbl 구조로 래핑 (템플릿 패턴과 동일)
         p_wrap = etree.Element(f'{{{HP}}}p', {
-            'id': '0', 'paraPrIDRef': params.wrap_para_pr, 'styleIDRef': '0',
+            'id': str(next_id()), 'paraPrIDRef': params.wrap_para_pr, 'styleIDRef': '0',
             'pageBreak': '0', 'columnBreak': '0', 'merged': '0',
         })
         run_wrap = etree.SubElement(p_wrap, f'{{{HP}}}run', {'charPrIDRef': params.wrap_char_pr})
