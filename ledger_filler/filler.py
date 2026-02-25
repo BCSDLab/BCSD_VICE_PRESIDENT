@@ -104,7 +104,6 @@ def download_sheet_as_xlsx(url):
     request = drive.files().export_media(
         fileId=sheet_id,
         mimeType='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        supportsAllDrives=True,
     )
 
     buf = io.BytesIO()
@@ -234,7 +233,8 @@ def parse_transaction_file(filepath):
             else:
                 continue
             date_value = date_str.strftime('%Y.%m.%d') if isinstance(date_str, datetime) else str(date_str)
-            transactions.append((date_value, amount, str(name) if name else "", balance))
+            safe_balance = balance if isinstance(balance, (int, float)) else 0
+            transactions.append((date_value, amount, str(name) if name else "", safe_balance))
     finally:
         wb.close()
 
@@ -431,7 +431,7 @@ def fill_month(ws, month, transactions, force=False):
         _remerge_with_offset(ws, downstream, rows_to_insert)
     elif tx_count < placeholder_rows:
         rows_to_delete = placeholder_rows - tx_count
-        downstream = _collect_and_unmerge_downstream_c(ws, header_row + tx_count)
+        downstream = _collect_and_unmerge_downstream_c(ws, sogyeyu_row)
         ws.delete_rows(header_row + tx_count, rows_to_delete)
         sogyeyu_row -= rows_to_delete
         _remerge_with_offset(ws, downstream, -rows_to_delete)
