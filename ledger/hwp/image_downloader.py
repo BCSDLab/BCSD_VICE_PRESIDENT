@@ -7,6 +7,11 @@ from urllib.parse import urlparse, parse_qs
 
 load_dotenv()
 _GOOGLE_SECRET_JSON = os.getenv('GOOGLE_SERVICE_ACCOUNT_JSON') or os.getenv('GOOGLE_SECRET_JSON')
+if not _GOOGLE_SECRET_JSON:
+    raise RuntimeError(
+        "GOOGLE_SERVICE_ACCOUNT_JSON 환경변수가 설정되지 않았습니다. "
+        ".env 파일에 서비스 계정 키 경로를 지정해주세요."
+    )
 
 _credentials = service_account.Credentials.from_service_account_file(
     _GOOGLE_SECRET_JSON,

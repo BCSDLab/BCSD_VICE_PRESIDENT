@@ -90,21 +90,14 @@ python main.py "재학생 회비 관리 문서_20260225.xlsx" 2025-11 2026-02
 ### 사용법
 
 ```bash
-python fill_ledger.py                              # 가장 최신 거래내역 파일 자동 선택
+python fill_ledger.py                              # TRANSACTION_DRIVE_URL에서 최신 파일 자동 선택
 python fill_ledger.py 신한_거래내역/신한_거래내역_2602.xlsx
 python fill_ledger.py --force                      # 이미 기입된 월도 덮어쓰기
-python fill_ledger.py -o output/관리문서_수정본.xlsx
 ```
-
-실행 시 `재학생 회비 관리 문서_*.xlsx` 파일 중 가장 최신 날짜 파일을 자동으로 선택합니다.
 
 ### 출력 결과
 
-원본 파일명에 오늘 날짜가 붙은 파일이 생성됩니다.
-
-```
-재학생 회비 관리 문서_20260225_20260226.xlsx
-```
+`MANAGEMENT_SHEET_URL`에 지정된 Google Sheets 파일에 직접 업로드됩니다.
 
 ---
 

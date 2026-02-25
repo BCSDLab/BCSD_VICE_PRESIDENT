@@ -19,6 +19,7 @@ import sys
 import argparse
 import tempfile
 from copy import copy
+from datetime import datetime
 from urllib.parse import urlparse, parse_qs
 
 import openpyxl
@@ -79,7 +80,8 @@ def _get_drive_service():
                 raise ValueError("[ERROR] GOOGLE_OAUTH_CLIENT_JSON 환경변수가 설정되지 않았습니다.")
             flow = InstalledAppFlow.from_client_secrets_file(secret_json, _GOOGLE_SCOPES)
             creds = flow.run_local_server(port=0)
-        with open(GOOGLE_TOKEN_FILE, 'w') as f:
+        fd = os.open(GOOGLE_TOKEN_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, 'w') as f:
             f.write(creds.to_json())
 
     return build('drive', 'v3', credentials=creds)
@@ -131,7 +133,7 @@ def _find_latest_transaction_in_folder(drive, folder_id):
     ).execute()
     files = [(f['name'], f['id']) for f in result.get('files', []) if pattern.search(f['name'])]
     if not files:
-        raise FileNotFoundError(f"폴더에서 신한_거래내역_YYMM.xlsx 파일을 찾을 수 없습니다.")
+        raise FileNotFoundError("폴더에서 신한_거래내역_YYMM.xlsx 파일을 찾을 수 없습니다.")
     files.sort(key=lambda x: x[0])
     return files[-1][1], files[-1][0]
 
@@ -202,7 +204,9 @@ def parse_transaction_file(filepath):
     transactions = []
 
     for row in ws.iter_rows(min_row=2, values_only=True):
-        no, date_str, deposit, withdrawal, name, balance = row
+        if len(row) < 6:
+            continue
+        no, date_str, deposit, withdrawal, name, balance = row[:6]
         if no is None:
             continue
         deposit = deposit or 0
@@ -213,7 +217,8 @@ def parse_transaction_file(filepath):
             amount = -withdrawal
         else:
             continue
-        transactions.append((str(date_str), amount, str(name) if name else "", balance))
+        date_value = date_str.strftime('%Y.%m.%d') if isinstance(date_str, datetime) else str(date_str)
+        transactions.append((date_value, amount, str(name) if name else "", balance))
 
     return transactions
 
@@ -417,9 +422,11 @@ def fill_month(ws, month, transactions, force=False):
             _apply_row_styles(ws, row_idx, row_style)
         ws.cell(row=row_idx, column=COL_MONTH).value = month_label if i == 0 else None
         ws.cell(row=row_idx, column=COL_DATE).value = date_str
-        ws.cell(row=row_idx, column=COL_DESC).value = None    # 수동 기입
+        if not ws.cell(row=row_idx, column=COL_DESC).value:
+            ws.cell(row=row_idx, column=COL_DESC).value = None    # 수동 기입
         ws.cell(row=row_idx, column=COL_NAME).value = name
-        ws.cell(row=row_idx, column=COL_NOTE).value = None    # 수동 기입
+        if not ws.cell(row=row_idx, column=COL_NOTE).value:
+            ws.cell(row=row_idx, column=COL_NOTE).value = None    # 수동 기입
         ws.cell(row=row_idx, column=COL_AMOUNT).value = amount
         ws.cell(row=row_idx, column=COL_BALANCE).value = balance
 
@@ -499,7 +506,6 @@ def main():
   python fill_ledger.py
   python fill_ledger.py 신한_거래내역/신한_거래내역_2602.xlsx
   python fill_ledger.py --force
-  python fill_ledger.py -o output/관리문서_수정본.xlsx
 """,
     )
     parser.add_argument(
@@ -527,9 +533,9 @@ def main():
     else:
         tx_drive_url = os.getenv('TRANSACTION_DRIVE_URL')
         if not tx_drive_url:
-            print(f"[ERROR] TRANSACTION_DRIVE_URL 환경변수가 설정되지 않았습니다.")
+            print("[ERROR] TRANSACTION_DRIVE_URL 환경변수가 설정되지 않았습니다.")
             sys.exit(1)
-        print(f"\n[INFO] 거래내역 Drive에서 다운로드 중...")
+        print("\n[INFO] 거래내역 Drive에서 다운로드 중...")
         try:
             tx_original_name, tx_tmp_path = download_transaction_from_drive(tx_drive_url)
             tx_file = tx_tmp_path
@@ -551,7 +557,7 @@ def main():
     # 관리 문서 결정 (MANAGEMENT_SHEET_URL)
     management_sheet_url = os.getenv('MANAGEMENT_SHEET_URL')
     if not management_sheet_url:
-        print(f"[ERROR] MANAGEMENT_SHEET_URL 환경변수가 설정되지 않았습니다.")
+        print("[ERROR] MANAGEMENT_SHEET_URL 환경변수가 설정되지 않았습니다.")
         sys.exit(1)
 
     sheet_id = None
@@ -594,21 +600,25 @@ def main():
     print()
     print("=" * 60)
 
+    upload_ok = False
     try:
-        print(f"[INFO] Google Sheets로 업로드 중...")
+        print("[INFO] Google Sheets로 업로드 중...")
         upload_xlsx_to_sheet(sheet_id, out_file)
         print(f"[INFO] 업로드 완료: {management_sheet_url}")
+        upload_ok = True
     except Exception as e:
         print(f"[ERROR] 업로드 실패: {e}")
         print(f"[INFO] 로컬 임시 파일은 보존됩니다: {out_file}")
-        sys.exit(1)
     finally:
-        if tmp_path and os.path.exists(tmp_path):
+        if upload_ok and tmp_path and os.path.exists(tmp_path):
             os.remove(tmp_path)
 
-    print(f"[INFO] 아래 항목은 수동으로 기입해주세요:")
-    print(f"       - E열 (내용): 회비 / 서버비 / 회식비 등")
-    print(f"       - G열 (비고): 납부 월 등")
+    if not upload_ok:
+        sys.exit(1)
+
+    print("[INFO] 아래 항목은 수동으로 기입해주세요:")
+    print("       - E열 (내용): 회비 / 서버비 / 회식비 등")
+    print("       - G열 (비고): 납부 월 등")
     print("=" * 60)
 
     if tx_tmp_path and os.path.exists(tx_tmp_path):
