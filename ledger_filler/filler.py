@@ -144,7 +144,7 @@ def _extract_drive_folder_id(url):
 
 def _find_latest_transaction_in_folder(drive, folder_id):
     """폴더 내 신한_거래내역_YYMM.xlsx 파일 중 가장 최신 파일의 (file_id, name) 반환."""
-    pattern = re.compile(r'신한_거래내역_\d{4}\.xlsx$')
+    pattern = re.compile(r'신한_거래내역_(\d{4})\.xlsx$')
     files = []
     page_token = None
     while True:
@@ -157,14 +157,18 @@ def _find_latest_transaction_in_folder(drive, folder_id):
         if page_token:
             kwargs['pageToken'] = page_token
         result = drive.files().list(**kwargs).execute()
-        files += [(f['name'], f['id']) for f in result.get('files', []) if pattern.search(f['name'])]
+        for f in result.get('files', []):
+            m = pattern.search(f['name'])
+            if m:
+                files.append((int(m.group(1)), f['name'], f['id']))
         page_token = result.get('nextPageToken')
         if not page_token:
             break
     if not files:
         raise FileNotFoundError("폴더에서 신한_거래내역_YYMM.xlsx 파일을 찾을 수 없습니다.")
     files.sort(key=lambda x: x[0])
-    return files[-1][1], files[-1][0]
+    _, name, file_id = files[-1]
+    return file_id, name
 
 
 def download_transaction_from_drive(url):
@@ -234,7 +238,7 @@ def parse_transaction_file(filepath):
         list of (date_str, amount, name, balance)
         - amount: 입금이면 양수, 출금이면 음수
     """
-    wb = openpyxl.load_workbook(filepath)
+    wb = openpyxl.load_workbook(filepath, read_only=True, data_only=True)
     try:
         ws = wb.active
         transactions = []
@@ -452,6 +456,12 @@ def fill_month(ws, month, transactions, force=False):
         _remerge_with_offset(ws, downstream, rows_to_insert)
     elif tx_count < placeholder_rows:
         rows_to_delete = placeholder_rows - tx_count
+        # 삭제될 행에 수동 기입 항목이 있으면 경고
+        for r in range(header_row + tx_count, header_row + placeholder_rows):
+            desc = ws.cell(row=r, column=COL_DESC).value
+            note = ws.cell(row=r, column=COL_NOTE).value
+            if desc or note:
+                print(f"[WARNING] 행 {r}의 수동 기입 항목이 삭제됩니다: E열={desc!r}, G열={note!r}")
         downstream = _collect_and_unmerge_downstream_c(ws, sogyeyu_row)
         ws.delete_rows(header_row + tx_count, rows_to_delete)
         sogyeyu_row -= rows_to_delete
@@ -624,7 +634,7 @@ def main():
         # 관리 문서 열기
         try:
             wb = openpyxl.load_workbook(mgmt_file)
-        except (InvalidFileException, zipfile.BadZipFile) as e:
+        except Exception as e:
             print(f"[ERROR] 관리 문서 파일이 손상되었거나 읽을 수 없습니다: {e}")
             sys.exit(1)
         sheet_name = f"{year}년"
