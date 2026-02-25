@@ -45,16 +45,15 @@ def main():
     data_with_paths = imgd.run(expenses, IMAGE_DIR)
 
     print(f"[3/3] HWP 생성 중... ({hwp_output})")
-    if sys.platform == 'win32':
-        import ledger.hwp.hwp_generator as hwpg
+    try:
+        if sys.platform == 'win32':
+            import ledger.hwp.hwp_generator as hwpg
+        else:
+            import ledger.hwp.hwp_generator_xml as hwpg
         hwpg.run(data_with_paths, hwp_template, hwp_output)
-    else:
-        import ledger.hwp.hwp_generator_xml as hwpg
-        try:
-            hwpg.run(data_with_paths, hwp_template, hwp_output)
-        except ValueError as e:
-            print(f"오류: {e}", file=sys.stderr)
-            sys.exit(1)
+    except ValueError as e:
+        print(f"오류: {e}", file=sys.stderr)
+        sys.exit(1)
     print("완료")
 
 

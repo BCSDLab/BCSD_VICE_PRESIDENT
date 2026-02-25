@@ -81,11 +81,10 @@ def _update_content_hpf(hpf_bytes: bytes, new_binaries: dict) -> bytes:
     opf_ns = root.tag.split('}')[0].lstrip('{') if '}' in root.tag else ''
     manifest = root.find(f'{{{opf_ns}}}manifest') if opf_ns else root.find('manifest')
     if manifest is None:
-        import sys
-        print("경고: content.hpf에서 manifest를 찾을 수 없습니다. "
-              f"이미지 {len(new_binaries)}개가 등록되지 않아 깨질 수 있습니다.",
-              file=sys.stderr)
-        return hpf_bytes
+        raise ValueError(
+            "content.hpf에서 manifest를 찾지 못했습니다. "
+            "템플릿의 OPF 구조/네임스페이스를 확인하세요."
+        )
 
     for bin_path in new_binaries:               # 'BinData/image4.png'
         fname = bin_path.split('/')[-1]          # 'image4.png'
@@ -356,8 +355,19 @@ def run(data, t_path: str, o_path: str):
 
         img_rows: list[list] = []
         if img_paths:
-            imgs   = [Img(p) for p in img_paths]
-            layout = _layout(imgs, IMG_W_MM, IMG_H_MM)
+            imgs = []
+            for p in img_paths:
+                try:
+                    imgs.append(Img(p))
+                except Exception as e:
+                    print(f"  [{data_idx + 1}] 이미지 로드 실패: {p} ({e}) — 건너뜀")
+
+            if not imgs:
+                print(f"  [{data_idx + 1}] 유효한 이미지가 없어 이미지 셀 비워둠")
+                layout = None
+            else:
+                layout = _layout(imgs, IMG_W_MM, IMG_H_MM)
+
             if layout and layout.items:
                 rows_n, cols_n = layout.grid
                 for r_idx in range(rows_n):
@@ -373,15 +383,20 @@ def run(data, t_path: str, o_path: str):
                         bid = f'image{bin_counter}'
                         bin_counter += 1
 
-                        with open(img.path, 'rb') as f:
-                            new_binaries[f'BinData/{bid}.{ext}'] = f.read()
+                        try:
+                            with open(img.path, 'rb') as f:
+                                new_binaries[f'BinData/{bid}.{ext}'] = f.read()
+                        except OSError as e:
+                            print(f"  [{data_idx + 1}] 이미지 읽기 실패: {img.path} ({e}) — 건너뜀")
+                            bin_counter -= 1
+                            continue
 
                         disp_w = round(item.size[0] * HWP_PER_MM)
                         disp_h = round(item.size[1] * HWP_PER_MM)
                         row_items.append((bid, img, disp_w, disp_h))
                     if row_items:
                         img_rows.append(row_items)
-            else:
+            elif imgs:
                 print(f"  [{data_idx + 1}] 레이아웃 계산 실패 — 이미지 셀 비워둠")
         else:
             print(f"  [{data_idx + 1}] 증빙 자료 누락 — 확인 필요")
