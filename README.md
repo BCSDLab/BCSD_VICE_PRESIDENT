@@ -83,10 +83,8 @@ python main.py "재학생 회비 관리 문서_20260225.xlsx" 2025-11 2026-02
 
 ### 준비
 
-`TRANSACTION_DRIVE_URL`에 신한 거래내역 파일 또는 파일이 있는 폴더의 Google Drive 링크를 설정합니다.
-
-- **파일 URL**: 해당 파일을 직접 다운로드
-- **폴더 URL**: 폴더 내 `신한_거래내역_YYMM.xlsx` 중 가장 최신 파일 자동 선택
+`TRANSACTION_DRIVE_URL`에 신한 거래내역 파일들이 있는 Google Drive 폴더 링크를 설정합니다.
+폴더 내 `신한_거래내역_YYMM.xlsx` 중 가장 최신 파일을 자동으로 선택합니다.
 
 ### 사용법
 

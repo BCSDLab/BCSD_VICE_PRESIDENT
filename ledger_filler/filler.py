@@ -124,19 +124,11 @@ def download_sheet_as_xlsx(url):
     return sheet_id, tmp.name
 
 
-def _extract_drive_id(url):
-    """Google Drive URL에서 파일/폴더 ID와 종류 반환.
-
-    Returns:
-        (id, 'file' | 'folder')
-    """
+def _extract_drive_folder_id(url):
+    """Google Drive 폴더 URL에서 폴더 ID 추출."""
     if '/folders/' in url:
-        folder_id = url.split('/folders/')[1].split('/')[0].split('?')[0]
-        return folder_id, 'folder'
-    if '/d/' in url:
-        return url.split('/d/')[1].split('/')[0], 'file'
-    fid = parse_qs(urlparse(url).query).get('id', [None])[0]
-    return fid, 'file'
+        return url.split('/folders/')[1].split('/')[0].split('?')[0]
+    return parse_qs(urlparse(url).query).get('id', [None])[0]
 
 
 def _find_latest_transaction_in_folder(drive, folder_id):
@@ -155,28 +147,21 @@ def _find_latest_transaction_in_folder(drive, folder_id):
 
 def download_transaction_from_drive(url):
     """
-    Google Drive 파일 또는 폴더 URL에서 거래내역 xlsx 파일 다운로드.
+    Google Drive 폴더에서 최신 거래내역 xlsx 파일 다운로드.
 
-    - 파일 URL: 해당 파일 직접 다운로드
-    - 폴더 URL: 폴더 내 신한_거래내역_YYMM.xlsx 중 가장 최신 파일 다운로드
+    폴더 내 신한_거래내역_YYMM.xlsx 중 가장 최신 파일을 다운로드.
 
     Returns:
         (original_filename, tmp_path) — 호출자가 tmp_path를 사용 후 삭제 책임
     """
     from googleapiclient.http import MediaIoBaseDownload
 
-    drive_id, kind = _extract_drive_id(url)
-    if not drive_id:
-        raise ValueError(f"Google Drive URL에서 ID를 파싱할 수 없습니다: {url}")
+    folder_id = _extract_drive_folder_id(url)
+    if not folder_id:
+        raise ValueError(f"Google Drive 폴더 URL에서 ID를 파싱할 수 없습니다: {url}")
 
     drive = _get_drive_service()
-
-    if kind == 'folder':
-        file_id, original_name = _find_latest_transaction_in_folder(drive, drive_id)
-    else:
-        file_info = drive.files().get(fileId=drive_id, fields='name').execute()
-        file_id = drive_id
-        original_name = file_info.get('name', 'transaction.xlsx')
+    file_id, original_name = _find_latest_transaction_in_folder(drive, folder_id)
 
     request = drive.files().get_media(fileId=file_id)
     buf = io.BytesIO()
