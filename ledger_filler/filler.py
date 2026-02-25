@@ -30,8 +30,6 @@ from openpyxl.styles import Border, Side
 # Constants
 # ============================================================================
 
-TRANSACTION_DIR = "신한_거래내역"
-TRANSACTION_PATTERN = os.path.join(TRANSACTION_DIR, "신한_거래내역_*.xlsx")
 MANAGEMENT_PATTERN = "재학생 회비 관리 문서_*.xlsx"
 
 # 관리 문서 컬럼 (1-based)
@@ -258,12 +256,6 @@ def get_year_month_from_filename(filepath):
         raise ValueError(f"파일명에서 연도/월을 파싱할 수 없습니다: {basename}")
     yy, mm = int(match.group(1)), int(match.group(2))
     return 2000 + yy, mm
-
-
-def find_latest_transaction_file():
-    """가장 최신 거래내역 파일 경로 반환."""
-    files = sorted(glob.glob(TRANSACTION_PATTERN))
-    return files[-1] if files else None
 
 
 def find_management_file():
@@ -548,7 +540,7 @@ def main():
     parser.add_argument(
         "transaction_file",
         nargs="?",
-        help="거래내역 파일 경로 (미지정 시 신한_거래내역/ 내 가장 최신 파일 자동 선택)",
+        help="거래내역 파일 경로 (미지정 시 TRANSACTION_DRIVE_URL에서 다운로드)",
     )
     parser.add_argument(
         "-o", "--output",
@@ -570,13 +562,16 @@ def main():
     print("=" * 60)
 
     # 거래내역 파일 결정
-    tx_drive_url = os.getenv('TRANSACTION_DRIVE_URL')
     tx_original_name = None
     tx_tmp_path = None
 
     if args.transaction_file:
         tx_file = args.transaction_file
-    elif tx_drive_url:
+    else:
+        tx_drive_url = os.getenv('TRANSACTION_DRIVE_URL')
+        if not tx_drive_url:
+            print(f"[ERROR] TRANSACTION_DRIVE_URL 환경변수가 설정되지 않았습니다.")
+            sys.exit(1)
         print(f"\n[INFO] 거래내역 Drive에서 다운로드 중...")
         try:
             tx_original_name, tx_tmp_path = download_transaction_from_drive(tx_drive_url)
@@ -585,12 +580,7 @@ def main():
         except Exception as e:
             print(f"[ERROR] 거래내역 Drive 다운로드 실패: {e}")
             sys.exit(1)
-    else:
-        tx_file = find_latest_transaction_file()
 
-    if not tx_file or not os.path.exists(tx_file):
-        print(f"[ERROR] 거래내역 파일을 찾을 수 없습니다.")
-        sys.exit(1)
     print(f"\n[INFO] 거래내역 파일: {tx_original_name or tx_file}")
 
     # 연도/월 파싱: Drive에서 받은 경우 원본 파일명 기준
