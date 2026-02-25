@@ -29,11 +29,11 @@ IMG_CELL_H  = 25332   # 이미지 행 높이
 MARGIN_LR   = 510     # 좌우 셀 여백
 MARGIN_TB   = 141     # 상하 셀 여백
 
-# 이미지가 들어갈 실제 내부 너비·높이
-IMG_W_HWP = CELL_W - 2 * MARGIN_LR    # 50857
-IMG_H_HWP = IMG_CELL_H - 2 * MARGIN_TB  # 25050
-IMG_W_MM  = IMG_W_HWP / HWP_PER_MM    # ≈ 179.4 mm
-IMG_H_MM  = IMG_H_HWP / HWP_PER_MM    # ≈ 88.4 mm
+# 이미지 레이아웃 기준 크기: 셀 전체 영역 (pyhwpx와 동일하게 여백 포함)
+IMG_W_HWP = CELL_W      # 51877
+IMG_H_HWP = IMG_CELL_H  # 25332
+IMG_W_MM  = IMG_W_HWP / HWP_PER_MM    # ≈ 183.0 mm
+IMG_H_MM  = IMG_H_HWP / HWP_PER_MM    # ≈ 89.4 mm
 
 
 # ── 헬퍼 함수 ─────────────────────────────────────────────────────────
@@ -126,15 +126,13 @@ def _hp(parent: etree._Element, tag: str, attribs: dict | None = None) -> etree.
 
 def _build_pic(binary_id: str, img: Img, disp_w: int, disp_h: int, z: int) -> etree._Element:
     """인라인(treatAsChar=1) 이미지 요소를 만든다."""
+    # 물리적 원본 크기: DPI 없으면 96 DPI 가정 (pyhwpx 기본값)
     with Image.open(img.path) as im:
         raw_dpi = im.info.get('dpi', (96, 96))
     dpi_x = float(raw_dpi[0]) or 96
     dpi_y = float(raw_dpi[1]) or 96
-
-    org_w = round(img.w / dpi_x * 7200)
+    org_w = round(img.w / dpi_x * 7200)  # 물리적 크기 (HWP unit) → imgClip/imgDim 용
     org_h = round(img.h / dpi_y * 7200)
-    sx = disp_w / org_w if org_w else 1.0
-    sy = disp_h / org_h if org_h else 1.0
 
     pic = etree.Element(f'{{{HP}}}pic', {
         'id':            str(_next_id()),
@@ -151,8 +149,10 @@ def _build_pic(binary_id: str, img: Img, disp_w: int, disp_h: int, z: int) -> et
     })
 
     _hp(pic, 'offset',  {'x': '0', 'y': '0'})
-    _hp(pic, 'orgSz',   {'width': str(org_w), 'height': str(org_h)})
-    _hp(pic, 'curSz',   {'width': str(disp_w), 'height': str(disp_h)})
+    # orgSz = 표시 크기 (pyhwpx 방식: 물리적 크기가 아닌 렌더링 크기)
+    _hp(pic, 'orgSz',   {'width': str(disp_w), 'height': str(disp_h)})
+    # curSz = 0,0 → "sz와 동일" 의미 (pyhwpx 동작)
+    _hp(pic, 'curSz',   {'width': '0', 'height': '0'})
     _hp(pic, 'flip',    {'horizontal': '0', 'vertical': '0'})
     _hp(pic, 'rotationInfo', {
         'angle': '0', 'centerX': str(disp_w // 2), 'centerY': str(disp_h // 2),
@@ -162,22 +162,28 @@ def _build_pic(binary_id: str, img: Img, disp_w: int, disp_h: int, z: int) -> et
     ri = _hp(pic, 'renderingInfo')
     etree.SubElement(ri, f'{{{HC}}}transMatrix',
                      {'e1': '1', 'e2': '0', 'e3': '0', 'e4': '0', 'e5': '1', 'e6': '0'})
+    # scaMatrix = identity (orgSz이 이미 표시 크기이므로 배율 불필요)
     etree.SubElement(ri, f'{{{HC}}}scaMatrix',
-                     {'e1': f'{sx:.6f}', 'e2': '0', 'e3': '0',
-                      'e4': '0', 'e5': f'{sy:.6f}', 'e6': '0'})
+                     {'e1': '1', 'e2': '0', 'e3': '0', 'e4': '0', 'e5': '1', 'e6': '0'})
     etree.SubElement(ri, f'{{{HC}}}rotMatrix',
                      {'e1': '1', 'e2': '0', 'e3': '0', 'e4': '0', 'e5': '1', 'e6': '0'})
 
-    img_rect = _hp(pic, 'imgRect')
-    for tag, x, y in [('pt0', 0, 0), ('pt1', org_w, 0), ('pt2', org_w, org_h), ('pt3', 0, org_h)]:
-        etree.SubElement(img_rect, f'{{{HC}}}{tag}', {'x': str(x), 'y': str(y)})
-
-    _hp(pic, 'imgClip',  {'left': '0', 'right': '0', 'top': '0', 'bottom': '0'})
-    _hp(pic, 'inMargin', {'left': '0', 'right': '0', 'top': '0', 'bottom': '0'})
+    # img는 imgRect 앞에 위치 (pyhwpx 요소 순서)
     etree.SubElement(pic, f'{{{HC}}}img', {
         'binaryItemIDRef': binary_id,
         'bright': '0', 'contrast': '0', 'effect': 'REAL_PIC', 'alpha': '0',
     })
+
+    # imgRect 좌표는 orgSz(= 표시 크기) 기준
+    img_rect = _hp(pic, 'imgRect')
+    for tag, x, y in [('pt0', 0, 0), ('pt1', disp_w, 0), ('pt2', disp_w, disp_h), ('pt3', 0, disp_h)]:
+        etree.SubElement(img_rect, f'{{{HC}}}{tag}', {'x': str(x), 'y': str(y)})
+
+    # imgClip right/bottom = 물리적 원본 크기 (전체 이미지 사용, 크롭 없음)
+    _hp(pic, 'imgClip',  {'left': '0', 'right': str(org_w), 'top': '0', 'bottom': str(org_h)})
+    _hp(pic, 'inMargin', {'left': '0', 'right': '0', 'top': '0', 'bottom': '0'})
+    # imgDim = 물리적 원본 크기 (pyhwpx가 생성하는 메타데이터)
+    _hp(pic, 'imgDim',   {'dimwidth': str(org_w), 'dimheight': str(org_h)})
     _hp(pic, 'effects')
     _hp(pic, 'sz', {
         'width': str(disp_w), 'widthRelTo': 'ABSOLUTE',
@@ -219,14 +225,15 @@ def _build_table(title: str, img_rows: list, z: int) -> tuple:
     })
     z += 1
 
-    total_h = TITLE_ROW_H + IMG_CELL_H
+    # sz.height = 셀 합 + outMargin 1개 (pyhwpx 실측값 기준)
+    total_h = TITLE_ROW_H + IMG_CELL_H + 283
     _hp(tbl, 'sz',  {'width': str(CELL_W), 'widthRelTo': 'ABSOLUTE',
                      'height': str(total_h), 'heightRelTo': 'ABSOLUTE', 'protect': '0'})
     _hp(tbl, 'pos', {
-        'treatAsChar': '0', 'affectLSpacing': '0', 'flowWithText': '1',
+        'treatAsChar': '1', 'affectLSpacing': '0', 'flowWithText': '1',
         'allowOverlap': '0', 'holdAnchorAndSO': '0',
         'vertRelTo': 'PARA', 'horzRelTo': 'COLUMN',
-        'vertAlign': 'TOP', 'horzAlign': 'LEFT', 'vertOffset': '0', 'horzOffset': '0',
+        'vertAlign': 'TOP', 'horzAlign': 'LEFT', 'vertOffset': '434', 'horzOffset': '0',
     })
     _hp(tbl, 'outMargin', {'left': '283', 'right': '283', 'top': '283', 'bottom': '283'})
     _hp(tbl, 'inMargin',  {'left': '510', 'right': '510', 'top': '141', 'bottom': '141'})
