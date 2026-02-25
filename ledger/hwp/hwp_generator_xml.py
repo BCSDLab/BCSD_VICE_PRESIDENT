@@ -140,7 +140,11 @@ def _update_content_hpf(hpf_bytes: bytes, new_binaries: dict) -> bytes:
 
 
 def _find_expense_ps(root: etree._Element) -> list:
-    """제목+이미지 표(2행 1열)를 담은 직계 hp:p 목록 반환."""
+    """제목+이미지 표(2행 1열)를 담은 직계 hp:p 목록 반환.
+
+    2행 1열이라는 구조 조건 외에, 첫 번째 행 셀에 텍스트 런(hp:t)이
+    존재하는지 추가로 검사하여 무관한 표가 오탐되는 것을 방지한다.
+    """
     result = []
     for p in root:
         if p.tag != f'{{{HP}}}p':
@@ -149,11 +153,28 @@ def _find_expense_ps(root: etree._Element) -> list:
             if run.tag != f'{{{HP}}}run':
                 continue
             for tbl in run:
-                if (tbl.tag == f'{{{HP}}}tbl'
+                if not (tbl.tag == f'{{{HP}}}tbl'
                         and tbl.get('rowCnt') == '2'
                         and tbl.get('colCnt') == '1'):
-                    result.append(p)
-                    break
+                    continue
+                rows = tbl.findall(f'{{{HP}}}tr')
+                if len(rows) < 2:
+                    continue
+                # 첫 번째 행: 제목 텍스트(hp:t)가 있는 셀인지 확인
+                title_tc = rows[0].find(f'{{{HP}}}tc')
+                if title_tc is None:
+                    continue
+                sl = title_tc.find(f'{{{HP}}}subList')
+                if sl is None:
+                    continue
+                para = sl.find(f'{{{HP}}}p')
+                if para is None:
+                    continue
+                run_el = para.find(f'{{{HP}}}run')
+                if run_el is None or run_el.find(f'{{{HP}}}t') is None:
+                    continue
+                result.append(p)
+                break
     return result
 
 
@@ -479,6 +500,12 @@ def run(data, t_path: str, o_path: str):
 
     # 4. 기존 증빙 표 단락 제거 (삽입 위치 기억)
     expense_ps = _find_expense_ps(root)
+    if len(expense_ps) > 1:
+        raise ValueError(
+            f"증빙 표 후보가 {len(expense_ps)}개 발견되었습니다. "
+            "템플릿에 2행 1열 표가 여러 개 있거나 구조가 예상과 다릅니다. "
+            "올바른 템플릿 파일인지 확인하세요."
+        )
     params     = _read_template_params(expense_ps)
     insert_idx = list(root).index(expense_ps[0]) if expense_ps else len(list(root))
     for p in expense_ps:
@@ -520,7 +547,7 @@ def run(data, t_path: str, o_path: str):
             else:
                 layout = _layout(imgs, params.img_w_mm, params.img_h_mm)
 
-            if layout and layout.items:
+            if layout and layout.items and layout.grid:
                 rows_n, cols_n = layout.grid
                 for r_idx in range(rows_n):
                     row_items = []
