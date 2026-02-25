@@ -549,6 +549,8 @@ def send_slack_dms(unpaid_data, template_path):
         raise ValueError("SENDER_NAME 환경 변수가 설정되지 않았습니다.")
     if not sender_phone:
         raise ValueError("SENDER_PHONE 환경 변수가 설정되지 않았습니다.")
+    if not fee_sheet_url:
+        raise ValueError("FEE_SHEET_URL 환경 변수가 설정되지 않았습니다.")
 
     client = WebClient(token=token)
 
