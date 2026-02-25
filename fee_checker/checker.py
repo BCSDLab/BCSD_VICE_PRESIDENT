@@ -491,6 +491,67 @@ def generate_message_files(unpaid_data, output_dir, template_path):
     return files_generated, total_unpaid_amount
 
 
+def send_slack_dms(unpaid_data, template_path):
+    """
+    미납 회원에게 Slack DM 발송
+
+    Returns:
+        tuple: (발송 성공 수, 실패/미매칭 수)
+    """
+    try:
+        from slack_sdk import WebClient
+        from slack_sdk.errors import SlackApiError
+    except ImportError:
+        raise ImportError("slack_sdk 패키지가 필요합니다: pip install slack-sdk")
+
+    token = os.getenv("SLACK_BOT_TOKEN")
+    if not token:
+        raise ValueError("SLACK_BOT_TOKEN 환경 변수가 설정되지 않았습니다.")
+
+    sender_id = os.getenv("SLACK_SENDER_ID", "")
+    if not sender_id:
+        raise ValueError("SLACK_SENDER_ID 환경 변수가 설정되지 않았습니다.")
+
+    client = WebClient(token=token)
+
+    with open(template_path, "r", encoding="utf-8") as f:
+        template_content = f.read()
+
+    previous_month_date = get_previous_month_end_date()
+
+    print("[INFO] DB에서 Slack ID 조회 중...")
+    name_to_user_id = fetch_slack_id_map()
+    print(f"[INFO] 조회된 멤버 수: {len(name_to_user_id)}명")
+
+    sent = 0
+    failed = 0
+
+    for (name, track), data in unpaid_data.items():
+        user_id = name_to_user_id.get((name, _normalize_track(track)))
+        if not user_id:
+            print(f"[WARNING] Slack 유저를 찾을 수 없음: {name} ({track})")
+            failed += 1
+            continue
+
+        formatted_amount = format_amount(data["unpaid_amount"])
+        message = template_content.replace("{이름}", name)
+        message = message.replace("{멘션}", f"<@{sender_id}>")
+        message = message.replace("{금액}", formatted_amount)
+        message = message.replace("{year}년 {month}월 {day}일", previous_month_date)
+
+        try:
+            dm_resp = client.conversations_open(users=[user_id])
+            channel_id = dm_resp["channel"]["id"]
+            client.chat_postMessage(channel=channel_id, text=message)
+            print(f"[INFO] DM 발송 완료: {name} ({track})")
+            sent += 1
+        except SlackApiError as e:
+            print(f"[ERROR] DM 발송 실패: {name} ({track}) - {e.response['error']}")
+            failed += 1
+
+    return sent, failed
+
+
 def parse_excluded_tracks(exclude_args):
     """CLI 인자에서 제외할 트랙 파싱"""
     excluded_tracks = set()
@@ -509,6 +570,11 @@ def main():
         action="append",
         dest="exclude_tracks",
         help="제외할 트랙명 (반복 사용 가능, 쉼표로 구분 가능)",
+    )
+    parser.add_argument(
+        "--send-dm",
+        action="store_true",
+        help="미납 회원에게 Slack DM 발송 (SLACK_BOT_TOKEN 환경 변수 필요)",
     )
     args = parser.parse_args()
 
@@ -570,6 +636,13 @@ def main():
 
     print(f"\n[INFO] 생성된 파일 수: {files_generated}개")
     print(f"[INFO] 총 미납 금액: {format_amount(total_unpaid_amount)}원")
+
+    if args.send_dm and unpaid_data:
+        print("\n" + "=" * 70)
+        print("Slack DM 발송")
+        print("=" * 70)
+        dm_sent, dm_failed = send_slack_dms(unpaid_data, TEMPLATE_FILE)
+        print(f"[INFO] DM 발송 완료: {dm_sent}명, 실패/미매칭: {dm_failed}명")
 
     print("\n" + "=" * 70)
     print("처리 완료 요약")

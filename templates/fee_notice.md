@@ -10,5 +10,5 @@ BCSD는 회원분들의 성장을 위해 다양한 서비스를 기획 및 개�
 세부적인 미납 내역의 경우, 아래 납부 문서에서 확인 가능합니다.
 https://docs.google.com/spreadsheets/d/1QwDdWR0He-BtbYCmu7oZolapjinCZBeFZ3nRoQE9VyY/edit?pli=1&gid=1380537991#gid=1380537991
 
-문의 사항은 슬랙 @공우진_Android 혹은 010-8704-9416으로 연락해주시면 됩니다.
+문의 사항은 슬랙 {멘션} 혹은 010-8704-9416으로 연락해주시면 됩니다.
 감사합니다.
