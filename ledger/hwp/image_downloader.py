@@ -6,7 +6,7 @@ from googleapiclient.discovery import build
 from urllib.parse import urlparse, parse_qs
 
 load_dotenv()
-_GOOGLE_SECRET_JSON = os.getenv('GOOGLE_SECRET_JSON')
+_GOOGLE_SECRET_JSON = os.getenv('GOOGLE_SERVICE_ACCOUNT_JSON') or os.getenv('GOOGLE_SECRET_JSON')
 
 _credentials = service_account.Credentials.from_service_account_file(
     _GOOGLE_SECRET_JSON,
