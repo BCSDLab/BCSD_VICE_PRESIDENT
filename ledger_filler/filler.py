@@ -127,11 +127,20 @@ def _extract_drive_folder_id(url):
 def _find_latest_transaction_in_folder(drive, folder_id):
     """폴더 내 신한_거래내역_YYMM.xlsx 파일 중 가장 최신 파일의 (file_id, name) 반환."""
     pattern = re.compile(r'신한_거래내역_\d{4}\.xlsx$')
-    result = drive.files().list(
-        q=f"'{folder_id}' in parents and mimeType='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' and trashed=false",
-        fields='files(id, name)',
-    ).execute()
-    files = [(f['name'], f['id']) for f in result.get('files', []) if pattern.search(f['name'])]
+    files = []
+    page_token = None
+    while True:
+        kwargs = dict(
+            q=f"'{folder_id}' in parents and mimeType='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' and trashed=false",
+            fields='nextPageToken, files(id, name)',
+        )
+        if page_token:
+            kwargs['pageToken'] = page_token
+        result = drive.files().list(**kwargs).execute()
+        files += [(f['name'], f['id']) for f in result.get('files', []) if pattern.search(f['name'])]
+        page_token = result.get('nextPageToken')
+        if not page_token:
+            break
     if not files:
         raise FileNotFoundError("폴더에서 신한_거래내역_YYMM.xlsx 파일을 찾을 수 없습니다.")
     files.sort(key=lambda x: x[0])
@@ -236,6 +245,8 @@ def get_year_month_from_filename(filepath):
     if not match:
         raise ValueError(f"파일명에서 연도/월을 파싱할 수 없습니다: {basename}")
     yy, mm = int(match.group(1)), int(match.group(2))
+    if not 1 <= mm <= 12:
+        raise ValueError(f"파일명의 월 값이 유효하지 않습니다 (mm={mm}): {basename}")
     return 2000 + yy, mm
 
 
@@ -527,6 +538,7 @@ def main():
     tx_tmp_path = None
     tmp_path = None
     upload_ok = False
+    preserve_tmp_path = False
 
     try:
         # 거래내역 파일 결정
@@ -605,6 +617,7 @@ def main():
             upload_ok = True
         except Exception as e:
             print(f"[ERROR] 업로드 실패: {e}")
+            preserve_tmp_path = True
 
         if not upload_ok:
             sys.exit(1)
@@ -617,7 +630,8 @@ def main():
     finally:
         if tx_tmp_path and os.path.exists(tx_tmp_path):
             os.remove(tx_tmp_path)
-        if upload_ok and tmp_path and os.path.exists(tmp_path):
-            os.remove(tmp_path)
-        elif not upload_ok and tmp_path and os.path.exists(tmp_path):
-            print(f"[INFO] 로컬 임시 파일은 보존됩니다: {tmp_path}")
+        if tmp_path and os.path.exists(tmp_path):
+            if preserve_tmp_path:
+                print(f"[INFO] 로컬 임시 파일은 보존됩니다: {tmp_path}")
+            else:
+                os.remove(tmp_path)
