@@ -290,13 +290,19 @@ def _db_connection():
         raise ImportError("필요한 패키지: pip install pymysql paramiko") from err
 
     ssh_host = os.getenv("SSH_HOST", "")
-    ssh_port = int(os.getenv("SSH_PORT", "22"))
+    try:
+        ssh_port = int(os.getenv("SSH_PORT", "22"))
+    except ValueError:
+        raise ValueError("SSH_PORT 환경 변수가 유효한 정수가 아닙니다.")
     ssh_user = os.getenv("SSH_USER", "")
     ssh_key_path = os.getenv("SSH_KEY_PATH")
     ssh_password = os.getenv("SSH_PASSWORD", "")
 
     db_host = os.getenv("DB_HOST", "127.0.0.1")
-    db_port = int(os.getenv("DB_PORT", "3306"))
+    try:
+        db_port = int(os.getenv("DB_PORT", "3306"))
+    except ValueError:
+        raise ValueError("DB_PORT 환경 변수가 유효한 정수가 아닙니다.")
     db_name = os.getenv("DB_NAME", "")
     db_user = os.getenv("DB_USER", "")
     db_password = os.getenv("DB_PASSWORD", "")
@@ -495,6 +501,8 @@ def generate_message_files(unpaid_data, output_dir, template_path):
     sender_name = os.getenv("SENDER_NAME", "")
     sender_phone = os.getenv("SENDER_PHONE", "")
     fee_sheet_url = os.getenv("FEE_SHEET_URL", "")
+    if not fee_sheet_url:
+        print("[WARNING] FEE_SHEET_URL 환경 변수가 설정되지 않았습니다. 납부문서 링크가 비어 있습니다.")
 
     for (name, track), data in unpaid_data.items():
         unpaid_amount = data["unpaid_amount"]
