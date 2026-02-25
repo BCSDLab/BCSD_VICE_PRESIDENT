@@ -196,6 +196,8 @@ python fee_check.py --send-dm
 │       ├── hwp_generator_xml.py   # HWPX 증빙 서류 생성 (Linux/macOS, XML 직접 조작)
 │       ├── image_downloader.py    # Google Drive 이미지 다운로드
 │       └── image_packer.py        # 이미지 그리드 레이아웃 계산
+├── ledger_filler/
+│   └── filler.py                  # 거래내역 → 관리 문서 자동 기입 로직
 ├── fee_checker/
 │   └── checker.py                 # 회비 미납자 확인 로직
 └── templates/
