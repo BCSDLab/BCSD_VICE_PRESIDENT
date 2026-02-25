@@ -207,6 +207,13 @@ def _validate_identifier(value):
     return value
 
 
+def _normalize_name(name):
+    """이름 정규화: 앞뒤 공백 제거"""
+    if name is None:
+        return ""
+    return str(name).strip()
+
+
 def _normalize_track(track):
     """트랙명 정규화: 영문자만 추출 후 소문자 변환 (예: 'FrontEnd' → 'frontend')"""
     if track is None:
@@ -334,7 +341,7 @@ def fetch_slack_id_map():
                 f" AND m.`{col_is_deleted}` = 0 AND t.`{col_is_deleted}` = 0"
             )
             return {
-                (row[col_name], _normalize_track(row["track_name"])): row[col_slack_id]
+                (_normalize_name(row[col_name]), _normalize_track(row["track_name"])): row[col_slack_id]
                 for row in cur.fetchall()
             }
 
@@ -551,7 +558,7 @@ def send_slack_dms(unpaid_data, template_path):
     failed = 0
 
     for (name, track), data in unpaid_data.items():
-        user_id = name_to_user_id.get((name, _normalize_track(track)))
+        user_id = name_to_user_id.get((_normalize_name(name), _normalize_track(track)))
         if not user_id:
             print(f"[WARNING] Slack 유저를 찾을 수 없음: {name} ({track})")
             failed += 1
@@ -603,7 +610,12 @@ def main():
     parser.add_argument(
         "--send-dm",
         action="store_true",
-        help="미납 회원에게 Slack DM 발송 (SLACK_BOT_TOKEN 환경 변수 필요)",
+        help=(
+            "미납 회원에게 Slack DM 발송. "
+            "필요한 환경 변수: SLACK_BOT_TOKEN, SLACK_SENDER_ID, SENDER_NAME, SENDER_PHONE, "
+            "SSH_HOST, SSH_USER, SSH_KEY_PATH (또는 SSH_PASSWORD), "
+            "DB_TABLE, DB_TRACK_TABLE (및 기타 DB_* 변수)"
+        ),
     )
     args = parser.parse_args()
 
