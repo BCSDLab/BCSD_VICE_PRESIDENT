@@ -61,6 +61,29 @@ def _max_z_order(root: etree._Element) -> int:
     )
 
 
+_MIME = {
+    'png': 'image/png', 'jpg': 'image/jpeg', 'jpeg': 'image/jpeg',
+    'bmp': 'image/bmp', 'gif': 'image/gif',  'webp': 'image/webp',
+}
+
+def _update_content_hpf(hpf_bytes: bytes, new_binaries: dict) -> bytes:
+    """content.hpf의 opf:manifest에 신규 바이너리 항목을 추가한다."""
+    OPF = 'http://www.idpf.org/2007/opf/'
+    root = etree.fromstring(hpf_bytes)
+    manifest = root.find(f'{{{OPF}}}manifest')
+    for bin_path in new_binaries:               # 'BinData/image4.png'
+        fname = bin_path.split('/')[-1]          # 'image4.png'
+        bid   = fname.rsplit('.', 1)[0]          # 'image4'
+        ext   = fname.rsplit('.', 1)[-1].lower() # 'png'
+        etree.SubElement(manifest, f'{{{OPF}}}item', {
+            'id':         bid,
+            'href':       bin_path,
+            'media-type': _MIME.get(ext, 'application/octet-stream'),
+            'isEmbeded':  '1',
+        })
+    return etree.tostring(root, xml_declaration=True, encoding='UTF-8', standalone=True)
+
+
 def _find_expense_ps(root: etree._Element) -> list:
     """제목+이미지 표(2행 1열)를 담은 직계 hp:p 목록 반환."""
     result = []
@@ -361,7 +384,14 @@ def run(data, t_path: str, o_path: str):
     for path, content in new_binaries.items():
         zip_files[path] = content
 
-    # 7. HWPX 패킹
+    # 7. content.hpf 매니페스트에 신규 이미지 등록
+    #    (한글이 BinData를 찾을 때 content.hpf의 opf:manifest를 참조함)
+    if new_binaries:
+        zip_files['Contents/content.hpf'] = _update_content_hpf(
+            zip_files['Contents/content.hpf'], new_binaries
+        )
+
+    # 8. HWPX 패킹
     os.makedirs(os.path.dirname(o_path) or '.', exist_ok=True)
     with zipfile.ZipFile(o_path, 'w', zipfile.ZIP_DEFLATED) as zout:
         for name, content in zip_files.items():
