@@ -26,7 +26,6 @@ from urllib.parse import urlparse, parse_qs
 import openpyxl
 from openpyxl.styles import Border, Side
 from openpyxl.utils import get_column_letter
-from openpyxl.utils.exceptions import InvalidFileException
 
 try:
     from googleapiclient.errors import HttpError as _HttpError
@@ -82,7 +81,11 @@ def _get_drive_service():
 
     creds = None
     if os.path.exists(GOOGLE_TOKEN_FILE):
-        creds = Credentials.from_authorized_user_file(GOOGLE_TOKEN_FILE, _GOOGLE_SCOPES)
+        try:
+            creds = Credentials.from_authorized_user_file(GOOGLE_TOKEN_FILE, _GOOGLE_SCOPES)
+        except (ValueError, OSError) as e:
+            print(f"[WARNING] 토큰 파일이 손상되어 재인증합니다: {e}")
+            creds = None
 
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
@@ -626,7 +629,7 @@ def main():
         # 거래내역 파싱
         try:
             transactions = parse_transaction_file(tx_file)
-        except (InvalidFileException, zipfile.BadZipFile) as e:
+        except Exception as e:
             print(f"[ERROR] 거래내역 파일이 손상되었거나 읽을 수 없습니다: {e}")
             sys.exit(1)
         print(f"[INFO] 파싱된 거래 건수: {len(transactions)}건")
