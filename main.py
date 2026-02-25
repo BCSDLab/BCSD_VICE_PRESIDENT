@@ -41,7 +41,7 @@ def main():
 
     import ledger.hwp.image_downloader as imgd
 
-    print(f"[2/3] 이미지 다운로드 중...")
+    print("[2/3] 이미지 다운로드 중...")
     data_with_paths = imgd.run(expenses, IMAGE_DIR)
 
     print(f"[3/3] HWP 생성 중... ({hwp_output})")

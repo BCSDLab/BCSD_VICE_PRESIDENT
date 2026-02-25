@@ -37,11 +37,16 @@ IMG_H_MM  = IMG_H_HWP / HWP_PER_MM    # ≈ 88.4 mm
 
 # ── 헬퍼 함수 ─────────────────────────────────────────────────────────
 
-# 문서 빌드 내에서 고유 ID를 보장하는 순차 카운터
+# run() 시작 시 리셋되는 순차 ID 카운터 (다중 호출 간 결정론적 ID 보장)
 _id_counter = itertools.count(100_000_000)
 
 def _next_id() -> int:
     return next(_id_counter)
+
+
+def _reset_id_counter() -> None:
+    global _id_counter
+    _id_counter = itertools.count(100_000_000)
 
 
 def _max_binary_idx(zip_files: dict) -> int:
@@ -76,7 +81,11 @@ def _update_content_hpf(hpf_bytes: bytes, new_binaries: dict) -> bytes:
     opf_ns = root.tag.split('}')[0].lstrip('{') if '}' in root.tag else ''
     manifest = root.find(f'{{{opf_ns}}}manifest') if opf_ns else root.find('manifest')
     if manifest is None:
-        return hpf_bytes  # manifest 없으면 원본 반환
+        import sys
+        print("경고: content.hpf에서 manifest를 찾을 수 없습니다. "
+              f"이미지 {len(new_binaries)}개가 등록되지 않아 깨질 수 있습니다.",
+              file=sys.stderr)
+        return hpf_bytes
 
     for bin_path in new_binaries:               # 'BinData/image4.png'
         fname = bin_path.split('/')[-1]          # 'image4.png'
@@ -301,6 +310,9 @@ def run(data, t_path: str, o_path: str):
     t_path    : 템플릿 .hwpx 파일 경로
     o_path    : 출력 .hwpx 파일 경로
     """
+    # 0. ID 카운터 초기화 (다중 호출 시 결정론적 ID 보장)
+    _reset_id_counter()
+
     # 1. 템플릿 ZIP 읽기 (.hwp 바이너리는 지원 불가)
     if not zipfile.is_zipfile(t_path):
         ext = os.path.splitext(t_path)[1]
@@ -405,12 +417,14 @@ def run(data, t_path: str, o_path: str):
     if new_binaries:
         zip_files[HPF_KEY] = _update_content_hpf(zip_files[HPF_KEY], new_binaries)
 
-    # 9. HWPX 패킹 (원본 압축 방식 보존)
+    # 9. HWPX 패킹 (원본 ZipInfo 재사용 → 타임스탬프·외부속성 보존)
     os.makedirs(os.path.dirname(o_path) or '.', exist_ok=True)
     with zipfile.ZipFile(o_path, 'w', zipfile.ZIP_DEFLATED) as zout:
         for name, content in zip_files.items():
             orig = zip_infos.get(name)
-            compress = orig.compress_type if orig else zipfile.ZIP_DEFLATED
-            zout.writestr(name, content, compress_type=compress)
+            if orig:
+                zout.writestr(orig, content)
+            else:
+                zout.writestr(name, content, compress_type=zipfile.ZIP_DEFLATED)
 
     print(f"HWPX 생성 완료: {o_path}")
