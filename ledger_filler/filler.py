@@ -94,12 +94,14 @@ def _get_drive_service():
             except Exception as e:
                 print(f"[WARNING] 토큰 갱신 실패, 재인증합니다: {e}")
                 creds = None
-        if not creds:
+        if not creds or not creds.valid:
             secret_json = os.getenv('GOOGLE_OAUTH_CLIENT_JSON') or os.getenv('GOOGLE_SECRET_JSON')
             if not secret_json:
                 raise ValueError("[ERROR] GOOGLE_OAUTH_CLIENT_JSON 환경변수가 설정되지 않았습니다.")
             flow = InstalledAppFlow.from_client_secrets_file(secret_json, _GOOGLE_SCOPES)
             creds = flow.run_local_server(port=0)
+            if not creds or not creds.valid:
+                raise RuntimeError("OAuth 인증에 실패했습니다.")
         fd = os.open(GOOGLE_TOKEN_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, 'w') as f:
             f.write(creds.to_json())
@@ -167,7 +169,9 @@ def _find_latest_transaction_in_folder(drive, folder_id):
         for f in result.get('files', []):
             m = pattern.search(f['name'])
             if m:
-                files.append((int(m.group(1)), f['name'], f['id']))
+                s = m.group(1)
+                if 1 <= int(s[2:]) <= 12:
+                    files.append((int(s), f['name'], f['id']))
         page_token = result.get('nextPageToken')
         if not page_token:
             break
