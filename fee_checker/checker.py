@@ -512,6 +512,13 @@ def send_slack_dms(unpaid_data, template_path):
     if not sender_id:
         raise ValueError("SLACK_SENDER_ID 환경 변수가 설정되지 않았습니다.")
 
+    sender_name = os.getenv("SENDER_NAME", "")
+    sender_phone = os.getenv("SENDER_PHONE", "")
+    if not sender_name:
+        raise ValueError("SENDER_NAME 환경 변수가 설정되지 않았습니다.")
+    if not sender_phone:
+        raise ValueError("SENDER_PHONE 환경 변수가 설정되지 않았습니다.")
+
     client = WebClient(token=token)
 
     with open(template_path, "r", encoding="utf-8") as f:
@@ -534,7 +541,9 @@ def send_slack_dms(unpaid_data, template_path):
             continue
 
         formatted_amount = format_amount(data["unpaid_amount"])
-        message = template_content.replace("{이름}", name)
+        message = template_content.replace("{발신자}", sender_name)
+        message = message.replace("{전화번호}", sender_phone)
+        message = message.replace("{이름}", name)
         message = message.replace("{멘션}", f"<@{sender_id}>")
         message = message.replace("{금액}", formatted_amount)
         message = message.replace("{year}년 {month}월 {day}일", previous_month_date)
