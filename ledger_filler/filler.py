@@ -28,6 +28,11 @@ from openpyxl.styles import Border, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.utils.exceptions import InvalidFileException
 
+try:
+    from googleapiclient.errors import HttpError as _HttpError
+except ImportError:
+    _HttpError = OSError  # type: ignore[assignment,misc]
+
 # ============================================================================
 # Constants
 # ============================================================================
@@ -119,8 +124,13 @@ def download_sheet_as_xlsx(url):
         _, done = downloader.next_chunk()
 
     tmp = tempfile.NamedTemporaryFile(suffix='.xlsx', delete=False)
-    tmp.write(buf.getvalue())
-    tmp.close()
+    try:
+        tmp.write(buf.getvalue())
+        tmp.close()
+    except Exception:
+        tmp.close()
+        os.unlink(tmp.name)
+        raise
 
     return sheet_id, tmp.name
 
@@ -183,8 +193,13 @@ def download_transaction_from_drive(url):
         _, done = downloader.next_chunk()
 
     tmp = tempfile.NamedTemporaryFile(suffix='.xlsx', delete=False)
-    tmp.write(buf.getvalue())
-    tmp.close()
+    try:
+        tmp.write(buf.getvalue())
+        tmp.close()
+    except Exception:
+        tmp.close()
+        os.unlink(tmp.name)
+        raise
 
     return original_name, tmp.name
 
@@ -569,7 +584,7 @@ def main():
                 tx_original_name, tx_tmp_path = download_transaction_from_drive(tx_drive_url)
                 tx_file = tx_tmp_path
                 print(f"[INFO] 다운로드 완료: {tx_original_name}")
-            except (FileNotFoundError, ValueError, OSError) as e:
+            except (FileNotFoundError, ValueError, OSError, _HttpError) as e:
                 print(f"[ERROR] 거래내역 Drive 다운로드 실패: {e}")
                 sys.exit(1)
 
@@ -594,7 +609,7 @@ def main():
             sheet_id, tmp_path = download_sheet_as_xlsx(management_sheet_url)
             mgmt_file = tmp_path
             print(f"[INFO] 다운로드 완료 → 임시 파일: {tmp_path}")
-        except (ValueError, OSError) as e:
+        except (ValueError, OSError, _HttpError) as e:
             print(f"[ERROR] Google Sheets 다운로드 실패: {e}")
             sys.exit(1)
 
@@ -643,7 +658,7 @@ def main():
             upload_xlsx_to_sheet(sheet_id, tmp_path)
             print(f"[INFO] 업로드 완료: {management_sheet_url}")
             upload_ok = True
-        except (OSError, ValueError) as e:
+        except (OSError, ValueError, _HttpError) as e:
             print(f"[ERROR] 업로드 실패: {e}")
             preserve_tmp_path = True
 
