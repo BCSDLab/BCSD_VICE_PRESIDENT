@@ -268,14 +268,15 @@ def _ssh_tunnel(ssh_host, ssh_port, ssh_user, remote_host, remote_port, ssh_key_
                     self.request.send(data)
             chan.close()
 
-    server = socketserver.ThreadingTCPServer(("127.0.0.1", 0), _ForwardHandler)
-    local_port = server.server_address[1]
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-
+    server = None
     try:
+        server = socketserver.ThreadingTCPServer(("127.0.0.1", 0), _ForwardHandler)
+        local_port = server.server_address[1]
+        threading.Thread(target=server.serve_forever, daemon=True).start()
         yield local_port
     finally:
-        server.shutdown()
+        if server is not None:
+            server.shutdown()
         client.close()
 
 
@@ -284,8 +285,8 @@ def _db_connection():
     """SSH 터널 경유 MySQL 연결 컨텍스트 매니저 (readonly)"""
     try:
         import pymysql
-    except ImportError:
-        raise ImportError("필요한 패키지: pip install pymysql paramiko")
+    except ImportError as err:
+        raise ImportError("필요한 패키지: pip install pymysql paramiko") from err
 
     ssh_host = os.getenv("SSH_HOST", "")
     ssh_port = int(os.getenv("SSH_PORT", "22"))
@@ -326,10 +327,13 @@ def fetch_slack_id_map():
     col_name       = _validate_identifier(os.getenv("DB_COL_NAME", "name"))
     col_slack_id   = _validate_identifier(os.getenv("DB_COL_SLACK_ID", "slack_id"))
     col_track_id   = _validate_identifier(os.getenv("DB_COL_TRACK_ID", "track_id"))
-    col_is_deleted = _validate_identifier(os.getenv("DB_COL_IS_DELETED", "is_deleted"))
-    track_table    = _validate_identifier(os.getenv("DB_TRACK_TABLE", ""))
-    track_col_id   = _validate_identifier(os.getenv("DB_TRACK_COL_ID", "id"))
-    track_col_name = _validate_identifier(os.getenv("DB_TRACK_COL_NAME", "name"))
+    col_is_deleted       = _validate_identifier(os.getenv("DB_COL_IS_DELETED", "is_deleted"))
+    track_table          = _validate_identifier(os.getenv("DB_TRACK_TABLE", ""))
+    track_col_id         = _validate_identifier(os.getenv("DB_TRACK_COL_ID", "id"))
+    track_col_name       = _validate_identifier(os.getenv("DB_TRACK_COL_NAME", "name"))
+    track_col_is_deleted = _validate_identifier(
+        os.getenv("DB_TRACK_COL_IS_DELETED", os.getenv("DB_COL_IS_DELETED", "is_deleted"))
+    )
 
     with _db_connection() as conn:
         with conn.cursor() as cur:
@@ -338,7 +342,7 @@ def fetch_slack_id_map():
                 f" FROM `{table}` m"
                 f" JOIN `{track_table}` t ON m.`{col_track_id}` = t.`{track_col_id}`"
                 f" WHERE m.`{col_slack_id}` IS NOT NULL AND m.`{col_slack_id}` != ''"
-                f" AND m.`{col_is_deleted}` = 0 AND t.`{col_is_deleted}` = 0"
+                f" AND m.`{col_is_deleted}` = 0 AND t.`{track_col_is_deleted}` = 0"
             )
             return {
                 (_normalize_name(row[col_name]), _normalize_track(row["track_name"])): row[col_slack_id]
@@ -435,17 +439,15 @@ def get_output_directory():
     return output_dir
 
 
+def _previous_month_last_day():
+    """전월 말일 datetime 객체 반환"""
+    return datetime.now().replace(day=1) - timedelta(days=1)
+
+
 def get_previous_month_end_date():
     """전월 말일을 한국어 형식으로 반환 (예: "2026년 1월 31일")"""
-    today = datetime.now()
-    first_day_of_current_month = today.replace(day=1)
-    last_day_of_previous_month = first_day_of_current_month - timedelta(days=1)
-
-    year = last_day_of_previous_month.year
-    month = last_day_of_previous_month.month
-    day = last_day_of_previous_month.day
-
-    return f"{year}년 {month}월 {day}일"
+    last_day = _previous_month_last_day()
+    return f"{last_day.year}년 {last_day.month}월 {last_day.day}일"
 
 
 def format_amount(amount):
@@ -483,7 +485,7 @@ def generate_message_files(unpaid_data, output_dir, template_path):
     with open(template_path, "r", encoding="utf-8") as f:
         template_content = f.read()
 
-    previous_month_date = get_previous_month_end_date()
+    last_day = _previous_month_last_day()
 
     used_filenames = set()
     files_generated = 0
@@ -501,7 +503,9 @@ def generate_message_files(unpaid_data, output_dir, template_path):
         message = message.replace("{멘션}", f"@{sender_name}" if sender_name else "{멘션}")
         message = message.replace("{이름}", name)
         message = message.replace("{금액}", formatted_amount)
-        message = message.replace("{year}년 {month}월 {day}일", previous_month_date)
+        message = message.replace("{year}", str(last_day.year))
+        message = message.replace("{month}", str(last_day.month))
+        message = message.replace("{day}", str(last_day.day))
 
         filename = generate_unique_filename(name, track, used_filenames)
         filepath = os.path.join(output_dir, filename)
@@ -525,8 +529,8 @@ def send_slack_dms(unpaid_data, template_path):
     try:
         from slack_sdk import WebClient
         from slack_sdk.errors import SlackApiError
-    except ImportError:
-        raise ImportError("slack_sdk 패키지가 필요합니다: pip install slack-sdk")
+    except ImportError as err:
+        raise ImportError("slack_sdk 패키지가 필요합니다: pip install slack-sdk") from err
 
     token = os.getenv("SLACK_BOT_TOKEN")
     if not token:
@@ -548,7 +552,7 @@ def send_slack_dms(unpaid_data, template_path):
     with open(template_path, "r", encoding="utf-8") as f:
         template_content = f.read()
 
-    previous_month_date = get_previous_month_end_date()
+    last_day = _previous_month_last_day()
 
     print("[INFO] DB에서 Slack ID 조회 중...")
     name_to_user_id = fetch_slack_id_map()
@@ -570,7 +574,9 @@ def send_slack_dms(unpaid_data, template_path):
         message = message.replace("{이름}", name)
         message = message.replace("{멘션}", f"<@{sender_id}>")
         message = message.replace("{금액}", formatted_amount)
-        message = message.replace("{year}년 {month}월 {day}일", previous_month_date)
+        message = message.replace("{year}", str(last_day.year))
+        message = message.replace("{month}", str(last_day.month))
+        message = message.replace("{day}", str(last_day.day))
 
         try:
             dm_resp = client.conversations_open(users=[user_id])

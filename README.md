@@ -90,6 +90,7 @@ python main.py "재학생 회비 관리 문서_20260225.xlsx" 2025-11 2026-02
 | `DB_TRACK_TABLE` | 트랙 테이블명 |
 | `DB_TRACK_COL_ID` | 트랙 PK 컬럼명 (기본값: `id`) |
 | `DB_TRACK_COL_NAME` | 트랙명 컬럼명 (기본값: `name`) |
+| `DB_TRACK_COL_IS_DELETED` | 트랙 삭제 여부 컬럼명 (기본값: `DB_COL_IS_DELETED` 값) |
 
 > Slack Bot에는 `users:read`, `im:write`, `chat:write` 권한이 필요합니다.
 
