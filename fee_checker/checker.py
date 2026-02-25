@@ -277,6 +277,7 @@ def _ssh_tunnel(ssh_host, ssh_port, ssh_user, remote_host, remote_port, ssh_key_
     finally:
         if server is not None:
             server.shutdown()
+            server.server_close()
         client.close()
 
 
