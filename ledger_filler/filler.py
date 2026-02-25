@@ -21,6 +21,7 @@ import argparse
 import tempfile
 from copy import copy
 from datetime import datetime
+from urllib.parse import urlparse, parse_qs
 
 import openpyxl
 from openpyxl.styles import Border, Side
@@ -123,6 +124,74 @@ def download_sheet_as_xlsx(url):
     tmp.close()
 
     return sheet_id, tmp.name
+
+
+def _extract_drive_id(url):
+    """Google Drive URL에서 파일/폴더 ID와 종류 반환.
+
+    Returns:
+        (id, 'file' | 'folder')
+    """
+    if '/folders/' in url:
+        folder_id = url.split('/folders/')[1].split('/')[0].split('?')[0]
+        return folder_id, 'folder'
+    if '/d/' in url:
+        return url.split('/d/')[1].split('/')[0], 'file'
+    fid = parse_qs(urlparse(url).query).get('id', [None])[0]
+    return fid, 'file'
+
+
+def _find_latest_transaction_in_folder(drive, folder_id):
+    """폴더 내 신한_거래내역_YYMM.xlsx 파일 중 가장 최신 파일의 (file_id, name) 반환."""
+    pattern = re.compile(r'신한_거래내역_\d{4}\.xlsx$')
+    result = drive.files().list(
+        q=f"'{folder_id}' in parents and mimeType='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' and trashed=false",
+        fields='files(id, name)',
+    ).execute()
+    files = [(f['name'], f['id']) for f in result.get('files', []) if pattern.search(f['name'])]
+    if not files:
+        raise FileNotFoundError(f"폴더에서 신한_거래내역_YYMM.xlsx 파일을 찾을 수 없습니다.")
+    files.sort(key=lambda x: x[0])
+    return files[-1][1], files[-1][0]
+
+
+def download_transaction_from_drive(url):
+    """
+    Google Drive 파일 또는 폴더 URL에서 거래내역 xlsx 파일 다운로드.
+
+    - 파일 URL: 해당 파일 직접 다운로드
+    - 폴더 URL: 폴더 내 신한_거래내역_YYMM.xlsx 중 가장 최신 파일 다운로드
+
+    Returns:
+        (original_filename, tmp_path) — 호출자가 tmp_path를 사용 후 삭제 책임
+    """
+    from googleapiclient.http import MediaIoBaseDownload
+
+    drive_id, kind = _extract_drive_id(url)
+    if not drive_id:
+        raise ValueError(f"Google Drive URL에서 ID를 파싱할 수 없습니다: {url}")
+
+    drive = _get_drive_service()
+
+    if kind == 'folder':
+        file_id, original_name = _find_latest_transaction_in_folder(drive, drive_id)
+    else:
+        file_info = drive.files().get(fileId=drive_id, fields='name').execute()
+        file_id = drive_id
+        original_name = file_info.get('name', 'transaction.xlsx')
+
+    request = drive.files().get_media(fileId=file_id)
+    buf = io.BytesIO()
+    downloader = MediaIoBaseDownload(buf, request)
+    done = False
+    while not done:
+        _, done = downloader.next_chunk()
+
+    tmp = tempfile.NamedTemporaryFile(suffix='.xlsx', delete=False)
+    tmp.write(buf.getvalue())
+    tmp.close()
+
+    return original_name, tmp.name
 
 
 def upload_xlsx_to_sheet(sheet_id, local_path):
@@ -501,15 +570,32 @@ def main():
     print("=" * 60)
 
     # 거래내역 파일 결정
-    tx_file = args.transaction_file or find_latest_transaction_file()
+    tx_drive_url = os.getenv('TRANSACTION_DRIVE_URL')
+    tx_original_name = None
+    tx_tmp_path = None
+
+    if args.transaction_file:
+        tx_file = args.transaction_file
+    elif tx_drive_url:
+        print(f"\n[INFO] 거래내역 Drive에서 다운로드 중...")
+        try:
+            tx_original_name, tx_tmp_path = download_transaction_from_drive(tx_drive_url)
+            tx_file = tx_tmp_path
+            print(f"[INFO] 다운로드 완료: {tx_original_name}")
+        except Exception as e:
+            print(f"[ERROR] 거래내역 Drive 다운로드 실패: {e}")
+            sys.exit(1)
+    else:
+        tx_file = find_latest_transaction_file()
+
     if not tx_file or not os.path.exists(tx_file):
         print(f"[ERROR] 거래내역 파일을 찾을 수 없습니다.")
         sys.exit(1)
-    print(f"\n[INFO] 거래내역 파일: {tx_file}")
+    print(f"\n[INFO] 거래내역 파일: {tx_original_name or tx_file}")
 
-    # 연도/월 파싱
+    # 연도/월 파싱: Drive에서 받은 경우 원본 파일명 기준
     try:
-        year, month = get_year_month_from_filename(tx_file)
+        year, month = get_year_month_from_filename(tx_original_name or tx_file)
     except ValueError as e:
         print(f"[ERROR] {e}")
         sys.exit(1)
@@ -592,3 +678,6 @@ def main():
     print(f"       - E열 (내용): 회비 / 서버비 / 회식비 등")
     print(f"       - G열 (비고): 납부 월 등")
     print("=" * 60)
+
+    if tx_tmp_path and os.path.exists(tx_tmp_path):
+        os.remove(tx_tmp_path)
