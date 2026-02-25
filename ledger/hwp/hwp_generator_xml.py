@@ -103,8 +103,16 @@ def _max_binary_idx(zip_files: dict) -> int:
 
 
 def _max_z_order(root: etree._Element) -> int:
+    def _safe_int(v: str) -> int | None:
+        try:
+            return int(v)
+        except (ValueError, TypeError):
+            return None
+
     return max(
-        (int(e.get('zOrder', 0)) for e in root.iter() if e.get('zOrder') is not None),
+        (n for e in root.iter()
+         if (z := e.get('zOrder')) is not None
+         if (n := _safe_int(z)) is not None),
         default=0,
     )
 
