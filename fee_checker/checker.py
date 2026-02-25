@@ -200,6 +200,13 @@ def calculate_unpaid_months(row_data, sheet_name, current_month):
     return unpaid_count
 
 
+def _validate_identifier(value):
+    """SQL 식별자 검증: 영문자·숫자·언더스코어만 허용 (SQL 인젝션 방지)"""
+    if not re.match(r'^[A-Za-z_][A-Za-z0-9_]*$', value):
+        raise ValueError(f"유효하지 않은 SQL 식별자: '{value}'")
+    return value
+
+
 def _normalize_track(track):
     """트랙명 정규화: 영문자만 추출 후 소문자 변환 (예: 'FrontEnd' → 'frontend')"""
     return re.sub(r'[^a-zA-Z]', '', track).lower()
@@ -214,7 +221,8 @@ def _ssh_tunnel(ssh_host, ssh_port, ssh_user, remote_host, remote_port, ssh_key_
     import paramiko
 
     client = paramiko.SSHClient()
-    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    client.load_system_host_keys()
+    client.set_missing_host_key_policy(paramiko.RejectPolicy())
 
     connect_kwargs: dict = {"port": ssh_port, "username": ssh_user}
     if ssh_key_path:
@@ -301,16 +309,14 @@ def _db_connection():
 
 def fetch_slack_id_map():
     """DB에서 (이름, 트랙명) → Slack ID 매핑 조회 (readonly SELECT)"""
-    table = os.getenv("DB_TABLE", "")
-    col_name = os.getenv("DB_COL_NAME", "")
-    col_slack_id = os.getenv("DB_COL_SLACK_ID", "")
-    track_table = os.getenv("DB_TRACK_TABLE", "")
-    track_col_id = os.getenv("DB_TRACK_COL_ID", "id")
-    track_col_name = os.getenv("DB_TRACK_COL_NAME", "name")
+    table       = _validate_identifier(os.getenv("DB_TABLE", ""))
+    col_name    = _validate_identifier(os.getenv("DB_COL_NAME", "name"))
+    col_slack_id = _validate_identifier(os.getenv("DB_COL_SLACK_ID", "slack_id"))
+    track_table  = _validate_identifier(os.getenv("DB_TRACK_TABLE", ""))
+    track_col_id   = _validate_identifier(os.getenv("DB_TRACK_COL_ID", "id"))
+    track_col_name = _validate_identifier(os.getenv("DB_TRACK_COL_NAME", "name"))
 
     assert table, "DB_TABLE 환경 변수가 설정되지 않았습니다."
-    assert col_name, "DB_COL_NAME 환경 변수가 설정되지 않았습니다."
-    assert col_slack_id, "DB_COL_SLACK_ID 환경 변수가 설정되지 않았습니다."
     assert track_table, "DB_TRACK_TABLE 환경 변수가 설정되지 않았습니다."
 
     with _db_connection() as conn:
@@ -475,7 +481,12 @@ def generate_message_files(unpaid_data, output_dir, template_path):
         unpaid_amount = data["unpaid_amount"]
         formatted_amount = format_amount(unpaid_amount)
 
-        message = template_content.replace("{이름}", name)
+        sender_name = os.getenv("SENDER_NAME", "")
+        sender_phone = os.getenv("SENDER_PHONE", "")
+        message = template_content.replace("{발신자}", sender_name)
+        message = message.replace("{전화번호}", sender_phone)
+        message = message.replace("{멘션}", f"@{sender_name}" if sender_name else "{멘션}")
+        message = message.replace("{이름}", name)
         message = message.replace("{금액}", formatted_amount)
         message = message.replace("{year}년 {month}월 {day}일", previous_month_date)
 
@@ -556,6 +567,9 @@ def send_slack_dms(unpaid_data, template_path):
             sent += 1
         except SlackApiError as e:
             print(f"[ERROR] DM 발송 실패: {name} ({track}) - {e.response['error']}")
+            failed += 1
+        except Exception as e:
+            print(f"[ERROR] DM 발송 중 예외 발생: {name} ({track}) - {e}")
             failed += 1
 
     return sent, failed
