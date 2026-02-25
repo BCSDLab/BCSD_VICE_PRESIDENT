@@ -3,7 +3,9 @@
 ## 실행 환경
 
 - Python 3.10+
-- HWP 증빙 서류 생성 기능(`pyhwpx`)은 **Windows 전용**입니다.
+- HWP 증빙 서류 생성
+  - **Windows**: `pyhwpx`를 사용합니다.
+  - **Linux / macOS**: HWPX(ZIP+XML) 직접 조작 방식으로 동작합니다. 템플릿은 `.hwpx` 형식이어야 합니다.
 
 ## 설치
 
@@ -27,7 +29,7 @@ cp .env.example .env
 
 | 변수 | 설명 |
 |---|---|
-| `DEBUG` | `True`면 HWP 창을 화면에 표시 |
+| `DEBUG` | `True`면 HWP 창을 화면에 표시 (Windows 전용) |
 | `GOOGLE_SECRET_JSON` | Google 서비스 계정 JSON 파일 경로 |
 
 > Google 서비스 계정에는 Google Docs API 및 Google Drive API 읽기 권한이 필요합니다.
@@ -94,9 +96,10 @@ python fee_check.py -e "Back-End,Android,Design"
 ├── ledger/
 │   ├── membership_fee_parser.py   # 재학생 회비 관리 문서 → 장부 변환
 │   └── hwp/
-│       ├── hwp_generator.py       # HWP 증빙 서류 생성
+│       ├── hwp_generator.py       # HWP 증빙 서류 생성 (Windows, pyhwpx)
+│       ├── hwp_generator_xml.py   # HWPX 증빙 서류 생성 (Linux/macOS, XML 직접 조작)
 │       ├── image_downloader.py    # Google Drive 이미지 다운로드
-│       └── image_packer.py        # HWP 테이블 셀 이미지 배치
+│       └── image_packer.py        # 이미지 그리드 레이아웃 계산
 ├── fee_checker/
 │   └── checker.py                 # 회비 미납자 확인 로직
 └── templates/
