@@ -57,19 +57,53 @@ python main.py "재학생 회비 관리 문서_20260225.xlsx" 2025-11 2026-02
 
 ---
 
-## 2. 회비 미납자 확인 (`fee_check.py`)
+## 2. 회비 미납자 확인 및 Slack DM 발송 (`fee_check.py`)
 
 재학생 회비 납부 문서에서 미납자를 집계하고, 개인별 알림 메시지 파일을 생성합니다.
+`--send-dm` 옵션을 사용하면 미납자에게 Slack DM을 자동으로 발송합니다.
+
+### 환경 설정
+
+`.env`에 아래 항목을 추가합니다. (SSH 터널을 통해 DB에 **readonly**로 접근합니다.)
+
+| 변수 | 설명 |
+|---|---|
+| `SLACK_BOT_TOKEN` | Slack Bot Token (`xoxb-...`) |
+| `SLACK_SENDER_ID` | 발신자(본인) Slack user_id |
+| `SENDER_NAME` | 발신자 이름 (메시지 서명에 사용) |
+| `SENDER_PHONE` | 발신자 전화번호 (메시지 문의처에 사용) |
+| `FEE_SHEET_URL` | 납부 문서 URL (메시지 내 하이퍼링크에 사용) |
+| `SSH_HOST` | SSH 서버 호스트 |
+| `SSH_PORT` | SSH 포트 (기본값: `22`) |
+| `SSH_USER` | SSH 사용자명 |
+| `SSH_KEY_PATH` | SSH 개인키 경로 (없으면 `SSH_PASSWORD` 사용) |
+| `SSH_PASSWORD` | SSH 비밀번호 (키 파일 미사용 시) |
+| `DB_HOST` | MySQL 호스트 (기본값: `127.0.0.1`) |
+| `DB_PORT` | MySQL 포트 (기본값: `3306`) |
+| `DB_NAME` | 데이터베이스명 |
+| `DB_USER` | DB 사용자명 (readonly 계정 권장) |
+| `DB_PASSWORD` | DB 비밀번호 |
+| `DB_TABLE` | 회원 테이블명 |
+| `DB_COL_NAME` | 이름 컬럼명 (기본값: `name`) |
+| `DB_COL_SLACK_ID` | Slack ID 컬럼명 (기본값: `slack_id`) |
+| `DB_COL_TRACK_ID` | 트랙 FK 컬럼명 (기본값: `track_id`) |
+| `DB_COL_IS_DELETED` | 삭제 여부 컬럼명 (기본값: `is_deleted`) |
+| `DB_TRACK_TABLE` | 트랙 테이블명 |
+| `DB_TRACK_COL_ID` | 트랙 PK 컬럼명 (기본값: `id`) |
+| `DB_TRACK_COL_NAME` | 트랙명 컬럼명 (기본값: `name`) |
+| `DB_TRACK_COL_IS_DELETED` | 트랙 삭제 여부 컬럼명 (기본값: `DB_COL_IS_DELETED` 값) |
+
+> Slack Bot에는 `users:read`, `im:write`, `chat:write` 권한이 필요합니다.
 
 ### 사용법
 
 ```bash
-python fee_check.py [-e <트랙명>]
+python fee_check.py [-e <트랙명>] [--send-dm]
 ```
 
 실행 시 `재학생 회비 납부 문서_*.xlsx` 파일 중 가장 최신 날짜 파일을 자동으로 선택합니다.
 
-**예시 — 전체 대상:**
+**예시 — 파일 생성만:**
 
 ```bash
 python fee_check.py
@@ -82,9 +116,18 @@ python fee_check.py -e "Back-End" -e "Android"
 python fee_check.py -e "Back-End,Android,Design"
 ```
 
+**예시 — 파일 생성 + Slack DM 발송:**
+
+```bash
+python fee_check.py --send-dm
+```
+
 ### 출력 결과
 
 `output/YYYY-MM/` 디렉토리에 미납자별 `.txt` 파일이 생성됩니다.
+`--send-dm` 사용 시 각 미납자에게 `templates/fee_notice.md` 내용으로 DM이 발송됩니다.
+
+> 트랙명 매칭은 영문자만 추출 후 소문자 변환하여 비교합니다. (예: `FrontEnd` = `frontend`)
 
 ---
 

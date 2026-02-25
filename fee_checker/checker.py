@@ -9,6 +9,7 @@ import sys
 import re
 import glob
 import argparse
+from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -199,6 +200,163 @@ def calculate_unpaid_months(row_data, sheet_name, current_month):
     return unpaid_count
 
 
+def _validate_identifier(value):
+    """SQL 식별자 검증: 영문자·숫자·언더스코어만 허용 (SQL 인젝션 방지)"""
+    if not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', value):
+        raise ValueError(f"유효하지 않은 SQL 식별자: '{value}'")
+    return value
+
+
+def _normalize_name(name):
+    """이름 정규화: 앞뒤 공백 제거"""
+    if name is None:
+        return ""
+    return str(name).strip()
+
+
+def _normalize_track(track):
+    """트랙명 정규화: 영문자만 추출 후 소문자 변환 (예: 'FrontEnd' → 'frontend')"""
+    if track is None:
+        return ""
+    return re.sub(r'[^a-zA-Z]', '', track).lower()
+
+
+@contextmanager
+def _ssh_tunnel(ssh_host, ssh_port, ssh_user, remote_host, remote_port, ssh_key_path=None, ssh_password=None):
+    """paramiko 기반 SSH 포트 포워딩 터널"""
+    import select
+    import threading
+    import socketserver
+    import paramiko
+
+    client = paramiko.SSHClient()
+    client.load_system_host_keys()
+    client.set_missing_host_key_policy(paramiko.RejectPolicy())
+
+    connect_kwargs: dict = {"port": ssh_port, "username": ssh_user}
+    if ssh_key_path:
+        connect_kwargs["key_filename"] = os.path.expanduser(ssh_key_path)
+    else:
+        connect_kwargs["password"] = ssh_password
+
+    client.connect(ssh_host, **connect_kwargs)
+    transport = client.get_transport()
+    if transport is None:
+        client.close()
+        raise RuntimeError("SSH 연결 후 transport를 가져올 수 없습니다.")
+
+    class _ForwardHandler(socketserver.BaseRequestHandler):
+        def handle(self):
+            chan = transport.open_channel(
+                "direct-tcpip",
+                (remote_host, remote_port),
+                self.request.getpeername(),
+            )
+            if chan is None:
+                return
+            while True:
+                readable = select.select([self.request, chan], [], [], 5)[0]
+                if self.request in readable:
+                    data = self.request.recv(1024)
+                    if not data:
+                        break
+                    chan.send(data)
+                if chan in readable:
+                    data = chan.recv(1024)
+                    if not data:
+                        break
+                    self.request.send(data)
+            chan.close()
+
+    server = None
+    try:
+        server = socketserver.ThreadingTCPServer(("127.0.0.1", 0), _ForwardHandler)
+        local_port = server.server_address[1]
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        yield local_port
+    finally:
+        if server is not None:
+            server.shutdown()
+            server.server_close()
+        client.close()
+
+
+@contextmanager
+def _db_connection():
+    """SSH 터널 경유 MySQL 연결 컨텍스트 매니저 (readonly)"""
+    try:
+        import pymysql
+    except ImportError as err:
+        raise ImportError("필요한 패키지: pip install pymysql paramiko") from err
+
+    ssh_host = os.getenv("SSH_HOST", "")
+    try:
+        ssh_port = int(os.getenv("SSH_PORT", "22"))
+    except ValueError:
+        raise ValueError("SSH_PORT 환경 변수가 유효한 정수가 아닙니다.")
+    ssh_user = os.getenv("SSH_USER", "")
+    ssh_key_path = os.getenv("SSH_KEY_PATH")
+    ssh_password = os.getenv("SSH_PASSWORD", "")
+
+    db_host = os.getenv("DB_HOST", "127.0.0.1")
+    try:
+        db_port = int(os.getenv("DB_PORT", "3306"))
+    except ValueError:
+        raise ValueError("DB_PORT 환경 변수가 유효한 정수가 아닙니다.")
+    db_name = os.getenv("DB_NAME", "")
+    db_user = os.getenv("DB_USER", "")
+    db_password = os.getenv("DB_PASSWORD", "")
+
+    if not ssh_host:
+        raise ValueError("SSH_HOST 환경 변수가 설정되지 않았습니다.")
+    if not ssh_user:
+        raise ValueError("SSH_USER 환경 변수가 설정되지 않았습니다.")
+
+    with _ssh_tunnel(ssh_host, ssh_port, ssh_user, db_host, db_port, ssh_key_path, ssh_password) as local_port:
+        conn = pymysql.connect(
+            host="127.0.0.1",
+            port=local_port,
+            user=db_user,
+            password=db_password,
+            database=db_name,
+            charset="utf8mb4",
+            cursorclass=pymysql.cursors.DictCursor,
+        )
+        try:
+            yield conn
+        finally:
+            conn.close()
+
+
+def fetch_slack_id_map():
+    """DB에서 (이름, 트랙명) → Slack ID 매핑 조회 (readonly SELECT)"""
+    table          = _validate_identifier(os.getenv("DB_TABLE", ""))
+    col_name       = _validate_identifier(os.getenv("DB_COL_NAME", "name"))
+    col_slack_id   = _validate_identifier(os.getenv("DB_COL_SLACK_ID", "slack_id"))
+    col_track_id   = _validate_identifier(os.getenv("DB_COL_TRACK_ID", "track_id"))
+    col_is_deleted       = _validate_identifier(os.getenv("DB_COL_IS_DELETED", "is_deleted"))
+    track_table          = _validate_identifier(os.getenv("DB_TRACK_TABLE", ""))
+    track_col_id         = _validate_identifier(os.getenv("DB_TRACK_COL_ID", "id"))
+    track_col_name       = _validate_identifier(os.getenv("DB_TRACK_COL_NAME", "name"))
+    track_col_is_deleted = _validate_identifier(
+        os.getenv("DB_TRACK_COL_IS_DELETED", os.getenv("DB_COL_IS_DELETED", "is_deleted"))
+    )
+
+    with _db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"SELECT m.`{col_name}`, t.`{track_col_name}` AS track_name, m.`{col_slack_id}`"
+                f" FROM `{table}` m"
+                f" JOIN `{track_table}` t ON m.`{col_track_id}` = t.`{track_col_id}`"
+                f" WHERE m.`{col_slack_id}` IS NOT NULL AND m.`{col_slack_id}` != ''"
+                f" AND m.`{col_is_deleted}` = 0 AND t.`{track_col_is_deleted}` = 0"
+            )
+            return {
+                (_normalize_name(row[col_name]), _normalize_track(row["track_name"])): row[col_slack_id]
+                for row in cur.fetchall()
+            }
+
+
 def aggregate_unpaid_fees(wb, current_month, excluded_tracks=None):
     """
     2025/2026 시트 데이터 통합 및 미납 금액 계산
@@ -288,17 +446,15 @@ def get_output_directory():
     return output_dir
 
 
+def _previous_month_last_day():
+    """전월 말일 datetime 객체 반환"""
+    return datetime.now().replace(day=1) - timedelta(days=1)
+
+
 def get_previous_month_end_date():
     """전월 말일을 한국어 형식으로 반환 (예: "2026년 1월 31일")"""
-    today = datetime.now()
-    first_day_of_current_month = today.replace(day=1)
-    last_day_of_previous_month = first_day_of_current_month - timedelta(days=1)
-
-    year = last_day_of_previous_month.year
-    month = last_day_of_previous_month.month
-    day = last_day_of_previous_month.day
-
-    return f"{year}년 {month}월 {day}일"
+    last_day = _previous_month_last_day()
+    return f"{last_day.year}년 {last_day.month}월 {last_day.day}일"
 
 
 def format_amount(amount):
@@ -336,19 +492,31 @@ def generate_message_files(unpaid_data, output_dir, template_path):
     with open(template_path, "r", encoding="utf-8") as f:
         template_content = f.read()
 
-    previous_month_date = get_previous_month_end_date()
+    last_day = _previous_month_last_day()
 
     used_filenames = set()
     files_generated = 0
     total_unpaid_amount = 0
 
+    sender_name = os.getenv("SENDER_NAME", "")
+    sender_phone = os.getenv("SENDER_PHONE", "")
+    fee_sheet_url = os.getenv("FEE_SHEET_URL", "")
+    if not fee_sheet_url:
+        print("[WARNING] FEE_SHEET_URL 환경 변수가 설정되지 않았습니다. 납부문서 링크가 비어 있습니다.")
+
     for (name, track), data in unpaid_data.items():
         unpaid_amount = data["unpaid_amount"]
         formatted_amount = format_amount(unpaid_amount)
 
-        message = template_content.replace("{이름}", name)
+        message = template_content.replace("{발신자}", sender_name)
+        message = message.replace("{전화번호}", sender_phone)
+        message = message.replace("{멘션}", f"@{sender_name}" if sender_name else "{멘션}")
+        message = message.replace("{이름}", name)
         message = message.replace("{금액}", formatted_amount)
-        message = message.replace("{year}년 {month}월 {day}일", previous_month_date)
+        message = message.replace("{납부문서URL}", fee_sheet_url)
+        message = message.replace("{year}", str(last_day.year))
+        message = message.replace("{month}", str(last_day.month))
+        message = message.replace("{day}", str(last_day.day))
 
         filename = generate_unique_filename(name, track, used_filenames)
         filepath = os.path.join(output_dir, filename)
@@ -360,6 +528,85 @@ def generate_message_files(unpaid_data, output_dir, template_path):
         total_unpaid_amount += unpaid_amount
 
     return files_generated, total_unpaid_amount
+
+
+def send_slack_dms(unpaid_data, template_path):
+    """
+    미납 회원에게 Slack DM 발송
+
+    Returns:
+        tuple: (발송 성공 수, 실패/미매칭 수)
+    """
+    try:
+        from slack_sdk import WebClient
+        from slack_sdk.errors import SlackApiError
+    except ImportError as err:
+        raise ImportError("slack_sdk 패키지가 필요합니다: pip install slack-sdk") from err
+
+    token = os.getenv("SLACK_BOT_TOKEN")
+    if not token:
+        raise ValueError("SLACK_BOT_TOKEN 환경 변수가 설정되지 않았습니다.")
+
+    sender_id = os.getenv("SLACK_SENDER_ID", "")
+    if not sender_id:
+        raise ValueError("SLACK_SENDER_ID 환경 변수가 설정되지 않았습니다.")
+
+    sender_name = os.getenv("SENDER_NAME", "")
+    sender_phone = os.getenv("SENDER_PHONE", "")
+    fee_sheet_url = os.getenv("FEE_SHEET_URL", "")
+    if not sender_name:
+        raise ValueError("SENDER_NAME 환경 변수가 설정되지 않았습니다.")
+    if not sender_phone:
+        raise ValueError("SENDER_PHONE 환경 변수가 설정되지 않았습니다.")
+    if not fee_sheet_url:
+        raise ValueError("FEE_SHEET_URL 환경 변수가 설정되지 않았습니다.")
+
+    client = WebClient(token=token)
+
+    with open(template_path, "r", encoding="utf-8") as f:
+        template_content = f.read()
+
+    last_day = _previous_month_last_day()
+
+    print("[INFO] DB에서 Slack ID 조회 중...")
+    name_to_user_id = fetch_slack_id_map()
+    print(f"[INFO] 조회된 멤버 수: {len(name_to_user_id)}명")
+
+    sent = 0
+    failed = 0
+
+    for (name, track), data in unpaid_data.items():
+        user_id = name_to_user_id.get((_normalize_name(name), _normalize_track(track)))
+        if not user_id:
+            print(f"[WARNING] Slack 유저를 찾을 수 없음: {name} ({track})")
+            failed += 1
+            continue
+
+        formatted_amount = format_amount(data["unpaid_amount"])
+        message = template_content.replace("{발신자}", sender_name)
+        message = message.replace("{전화번호}", sender_phone)
+        message = message.replace("{이름}", name)
+        message = message.replace("{멘션}", f"<@{sender_id}>")
+        message = message.replace("{금액}", formatted_amount)
+        message = message.replace("{납부문서URL}", fee_sheet_url)
+        message = message.replace("{year}", str(last_day.year))
+        message = message.replace("{month}", str(last_day.month))
+        message = message.replace("{day}", str(last_day.day))
+
+        try:
+            dm_resp = client.conversations_open(users=[user_id])
+            channel_id = dm_resp["channel"]["id"]
+            client.chat_postMessage(channel=channel_id, text=message)
+            print(f"[INFO] DM 발송 완료: {name} ({track})")
+            sent += 1
+        except SlackApiError as e:
+            print(f"[ERROR] DM 발송 실패: {name} ({track}) - {e.response['error']}")
+            failed += 1
+        except Exception as e:
+            print(f"[ERROR] DM 발송 중 예외 발생: {name} ({track}) - {e}")
+            failed += 1
+
+    return sent, failed
 
 
 def parse_excluded_tracks(exclude_args):
@@ -380,6 +627,16 @@ def main():
         action="append",
         dest="exclude_tracks",
         help="제외할 트랙명 (반복 사용 가능, 쉼표로 구분 가능)",
+    )
+    parser.add_argument(
+        "--send-dm",
+        action="store_true",
+        help=(
+            "미납 회원에게 Slack DM 발송. "
+            "필요한 환경 변수: SLACK_BOT_TOKEN, SLACK_SENDER_ID, SENDER_NAME, SENDER_PHONE, "
+            "SSH_HOST, SSH_USER, SSH_KEY_PATH (또는 SSH_PASSWORD), "
+            "DB_TABLE, DB_TRACK_TABLE (및 기타 DB_* 변수)"
+        ),
     )
     args = parser.parse_args()
 
@@ -441,6 +698,13 @@ def main():
 
     print(f"\n[INFO] 생성된 파일 수: {files_generated}개")
     print(f"[INFO] 총 미납 금액: {format_amount(total_unpaid_amount)}원")
+
+    if args.send_dm and unpaid_data:
+        print("\n" + "=" * 70)
+        print("Slack DM 발송")
+        print("=" * 70)
+        dm_sent, dm_failed = send_slack_dms(unpaid_data, TEMPLATE_FILE)
+        print(f"[INFO] DM 발송 완료: {dm_sent}명, 실패/미매칭: {dm_failed}명")
 
     print("\n" + "=" * 70)
     print("처리 완료 요약")
