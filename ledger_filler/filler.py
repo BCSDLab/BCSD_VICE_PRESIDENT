@@ -89,8 +89,12 @@ def _get_drive_service():
 
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
+            try:
+                creds.refresh(Request())
+            except Exception as e:
+                print(f"[WARNING] 토큰 갱신 실패, 재인증합니다: {e}")
+                creds = None
+        if not creds:
             secret_json = os.getenv('GOOGLE_OAUTH_CLIENT_JSON') or os.getenv('GOOGLE_SECRET_JSON')
             if not secret_json:
                 raise ValueError("[ERROR] GOOGLE_OAUTH_CLIENT_JSON 환경변수가 설정되지 않았습니다.")
@@ -261,7 +265,16 @@ def parse_transaction_file(filepath):
             else:
                 continue
             date_value = date_str.strftime('%Y.%m.%d') if isinstance(date_str, datetime) else str(date_str)
-            safe_balance = balance if isinstance(balance, (int, float)) else 0
+            if isinstance(balance, (int, float)):
+                safe_balance = balance
+            elif isinstance(balance, str):
+                raw = balance.replace(',', '').strip()
+                try:
+                    safe_balance = float(raw) if raw else None
+                except ValueError:
+                    safe_balance = None
+            else:
+                safe_balance = None
             transactions.append((date_value, amount, str(name) if name else "", safe_balance))
     finally:
         wb.close()
