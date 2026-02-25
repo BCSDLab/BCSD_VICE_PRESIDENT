@@ -5,8 +5,8 @@ HWPX는 ZIP + XML 구조이므로, 템플릿 파일을 언패킹하여
 section0.xml을 파싱·수정한 뒤 다시 패킹한다.
 """
 
+import itertools
 import os
-import random
 import zipfile
 from lxml import etree
 from PIL import Image
@@ -37,8 +37,11 @@ IMG_H_MM  = IMG_H_HWP / HWP_PER_MM    # ≈ 88.4 mm
 
 # ── 헬퍼 함수 ─────────────────────────────────────────────────────────
 
-def _rand_id() -> int:
-    return random.randint(100_000_000, 2_000_000_000)
+# 문서 빌드 내에서 고유 ID를 보장하는 순차 카운터
+_id_counter = itertools.count(100_000_000)
+
+def _next_id() -> int:
+    return next(_id_counter)
 
 
 def _max_binary_idx(zip_files: dict) -> int:
@@ -68,14 +71,18 @@ _MIME = {
 
 def _update_content_hpf(hpf_bytes: bytes, new_binaries: dict) -> bytes:
     """content.hpf의 opf:manifest에 신규 바이너리 항목을 추가한다."""
-    OPF = 'http://www.idpf.org/2007/opf/'
     root = etree.fromstring(hpf_bytes)
-    manifest = root.find(f'{{{OPF}}}manifest')
+    # 네임스페이스를 루트 태그에서 동적으로 추출 (하드코딩 오류 방지)
+    opf_ns = root.tag.split('}')[0].lstrip('{') if '}' in root.tag else ''
+    manifest = root.find(f'{{{opf_ns}}}manifest') if opf_ns else root.find('manifest')
+    if manifest is None:
+        return hpf_bytes  # manifest 없으면 원본 반환
+
     for bin_path in new_binaries:               # 'BinData/image4.png'
         fname = bin_path.split('/')[-1]          # 'image4.png'
         bid   = fname.rsplit('.', 1)[0]          # 'image4'
         ext   = fname.rsplit('.', 1)[-1].lower() # 'png'
-        etree.SubElement(manifest, f'{{{OPF}}}item', {
+        etree.SubElement(manifest, f'{{{opf_ns}}}item', {
             'id':         bid,
             'href':       bin_path,
             'media-type': _MIME.get(ext, 'application/octet-stream'),
@@ -121,7 +128,7 @@ def _build_pic(binary_id: str, img: Img, disp_w: int, disp_h: int, z: int) -> et
     sy = disp_h / org_h if org_h else 1.0
 
     pic = etree.Element(f'{{{HP}}}pic', {
-        'id':            str(_rand_id()),
+        'id':            str(_next_id()),
         'zOrder':        str(z),
         'numberingType': 'PICTURE',
         'textWrap':      'TOP_AND_BOTTOM',
@@ -130,7 +137,7 @@ def _build_pic(binary_id: str, img: Img, disp_w: int, disp_h: int, z: int) -> et
         'dropcapstyle':  'None',
         'href':          '',
         'groupLevel':    '0',
-        'instid':        str(_rand_id()),
+        'instid':        str(_next_id()),
         'reverse':       '0',
     })
 
@@ -186,7 +193,7 @@ def _build_table(title: str, img_rows: list, z: int) -> tuple:
     반환: (hp:tbl 요소, 다음 z 값)
     """
     tbl = etree.Element(f'{{{HP}}}tbl', {
-        'id':              str(_rand_id()),
+        'id':              str(_next_id()),
         'zOrder':          str(z),
         'numberingType':   'TABLE',
         'textWrap':        'TOP_AND_BOTTOM',
@@ -225,7 +232,7 @@ def _build_table(title: str, img_rows: list, z: int) -> tuple:
         'vertAlign': 'CENTER', 'linkListIDRef': '0', 'linkListNextIDRef': '0',
         'textWidth': '0', 'textHeight': '0', 'hasTextRef': '0', 'hasNumRef': '0',
     })
-    p1  = _hp(sl1, 'p', {'id': '2147483648', 'paraPrIDRef': '22', 'styleIDRef': '22',
+    p1  = _hp(sl1, 'p', {'id': str(_next_id()), 'paraPrIDRef': '22', 'styleIDRef': '22',
                           'pageBreak': '0', 'columnBreak': '0', 'merged': '0'})
     r1  = _hp(p1, 'run', {'charPrIDRef': '13'})
     _hp(r1, 't').text = title
@@ -304,25 +311,35 @@ def run(data, t_path: str, o_path: str):
         )
 
     with zipfile.ZipFile(t_path, 'r') as zin:
+        # ZipInfo 보존: 원본 압축 방식을 출력 시 그대로 유지
+        zip_infos = {info.filename: info for info in zin.infolist()}
         zip_files = {name: zin.read(name) for name in zin.namelist()}
 
-    # 2. section0.xml 파싱
-    root = etree.fromstring(zip_files['Contents/section0.xml'])
+    # 2. section0.xml / content.hpf 존재 여부 확인
+    SEC_KEY = 'Contents/section0.xml'
+    HPF_KEY = 'Contents/content.hpf'
+    if SEC_KEY not in zip_files:
+        raise ValueError(f"템플릿 HWPX에 '{SEC_KEY}'가 없습니다. 올바른 HWPX 파일인지 확인하세요.")
+    if HPF_KEY not in zip_files:
+        raise ValueError(f"템플릿 HWPX에 '{HPF_KEY}'가 없습니다. 올바른 HWPX 파일인지 확인하세요.")
 
-    # 3. 기존 증빙 표 단락 제거 (삽입 위치 기억)
+    # 3. section0.xml 파싱
+    root = etree.fromstring(zip_files[SEC_KEY])
+
+    # 4. 기존 증빙 표 단락 제거 (삽입 위치 기억)
     expense_ps = _find_expense_ps(root)
     insert_idx = list(root).index(expense_ps[0]) if expense_ps else len(list(root))
     for p in expense_ps:
         root.remove(p)
 
-    # 4. 카운터 초기화
+    # 5. 카운터 초기화
     bin_counter = _max_binary_idx(zip_files) + 1
     z           = _max_z_order(root) + 1
     new_binaries: dict[str, bytes] = {}
 
-    # 5. 지출 행마다 표 생성
-    for data_idx, row in data.iterrows():
-        title     = f'{data_idx + 1}. {row["종류"]}'
+    # 6. 지출 행마다 표 생성 (enumerate로 1-based 순번 보장)
+    for seq, (_, row) in enumerate(data.iterrows(), start=1):
+        title     = f'{seq}. {row["종류"]}'
         img_paths = row.get('img_paths', []) or []
 
         img_rows: list[list] = []
@@ -353,9 +370,9 @@ def run(data, t_path: str, o_path: str):
                     if row_items:
                         img_rows.append(row_items)
             else:
-                print(f"  [{data_idx + 1}] 레이아웃 계산 실패 — 이미지 셀 비워둠")
+                print(f"  [{seq}] 레이아웃 계산 실패 — 이미지 셀 비워둠")
         else:
-            print(f"  [{data_idx + 1}] 증빙 자료 누락 — 확인 필요")
+            print(f"  [{seq}] 증빙 자료 누락 — 확인 필요")
 
         tbl_elem, z = _build_table(title, img_rows, z)
 
@@ -377,24 +394,23 @@ def run(data, t_path: str, o_path: str):
         root.insert(insert_idx, p_wrap)
         insert_idx += 1
 
-    # 6. XML 직렬화
-    zip_files['Contents/section0.xml'] = etree.tostring(
+    # 7. XML 직렬화
+    zip_files[SEC_KEY] = etree.tostring(
         root, xml_declaration=True, encoding='UTF-8', standalone=True,
     )
     for path, content in new_binaries.items():
         zip_files[path] = content
 
-    # 7. content.hpf 매니페스트에 신규 이미지 등록
-    #    (한글이 BinData를 찾을 때 content.hpf의 opf:manifest를 참조함)
+    # 8. content.hpf 매니페스트에 신규 이미지 등록
     if new_binaries:
-        zip_files['Contents/content.hpf'] = _update_content_hpf(
-            zip_files['Contents/content.hpf'], new_binaries
-        )
+        zip_files[HPF_KEY] = _update_content_hpf(zip_files[HPF_KEY], new_binaries)
 
-    # 8. HWPX 패킹
+    # 9. HWPX 패킹 (원본 압축 방식 보존)
     os.makedirs(os.path.dirname(o_path) or '.', exist_ok=True)
     with zipfile.ZipFile(o_path, 'w', zipfile.ZIP_DEFLATED) as zout:
         for name, content in zip_files.items():
-            zout.writestr(name, content)
+            orig = zip_infos.get(name)
+            compress = orig.compress_type if orig else zipfile.ZIP_DEFLATED
+            zout.writestr(name, content, compress_type=compress)
 
     print(f"HWPX 생성 완료: {o_path}")

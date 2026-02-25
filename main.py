@@ -35,7 +35,7 @@ def main():
         return
     print(f"      → {len(df)}건 ({ledger_output})")
 
-    expenses = df[df['입/출'] < 0].copy()
+    expenses = df[df['입/출'] < 0].copy().reset_index(drop=True)
     expenses['종류'] = expenses['내용']
     print(f"      → 지출 {len(expenses)}건 증빙 서류 생성 대상")
 
@@ -50,7 +50,11 @@ def main():
         hwpg.run(data_with_paths, hwp_template, hwp_output)
     else:
         import ledger.hwp.hwp_generator_xml as hwpg
-        hwpg.run(data_with_paths, hwp_template, hwp_output)
+        try:
+            hwpg.run(data_with_paths, hwp_template, hwp_output)
+        except ValueError as e:
+            print(f"오류: {e}", file=sys.stderr)
+            sys.exit(1)
     print("완료")
 
 
