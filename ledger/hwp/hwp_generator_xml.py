@@ -284,9 +284,15 @@ def _build_pic(
     """인라인(treatAsChar=1) 이미지 요소를 만든다."""
     # 물리적 원본 크기: DPI 없으면 96 DPI 가정 (pyhwpx 기본값)
     with Image.open(img.path) as im:
-        raw_dpi = im.info.get('dpi', (96, 96))
-    dpi_x = float(raw_dpi[0]) or 96
-    dpi_y = float(raw_dpi[1]) or 96
+        raw_dpi = im.info.get('dpi')
+    if isinstance(raw_dpi, (tuple, list)) and len(raw_dpi) >= 2:
+        try:
+            dpi_x = float(raw_dpi[0]) or 96
+            dpi_y = float(raw_dpi[1]) or 96
+        except (TypeError, ValueError):
+            dpi_x = dpi_y = 96.0
+    else:
+        dpi_x = dpi_y = 96.0
     org_w = round(img.w / dpi_x * 7200)  # 물리적 크기 (HWP unit) → imgClip/imgDim 용
     org_h = round(img.h / dpi_y * 7200)
 
