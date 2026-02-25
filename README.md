@@ -30,7 +30,7 @@ cp .env.example .env
 | 변수 | 설명 |
 |---|---|
 | `DEBUG` | `True`면 HWP 창을 화면에 표시 (Windows 전용) |
-| `GOOGLE_SECRET_JSON` | Google 서비스 계정 JSON 파일 경로 |
+| `GOOGLE_SERVICE_ACCOUNT_JSON` | Google 서비스 계정 키 JSON 경로 (Google Docs/Drive 읽기) |
 
 > Google 서비스 계정에는 Google Docs API 및 Google Drive API 읽기 권한이 필요합니다.
 
@@ -57,7 +57,59 @@ python main.py "재학생 회비 관리 문서_20260225.xlsx" 2025-11 2026-02
 
 ---
 
-## 2. 회비 미납자 확인 및 Slack DM 발송 (`fee_check.py`)
+## 2. 거래내역 → 관리 문서 자동 기입 (`fill_ledger.py`)
+
+신한은행 거래내역 파일을 읽어 재학생 회비 관리 문서에 자동으로 기입합니다.
+
+| 구분 | 열 | 처리 방식 |
+|---|---|---|
+| 날짜 | D열 | **자동** |
+| 이름 (거래내역 내용) | F열 | **자동** |
+| 입/출 금액 | H열 | **자동** (입금 양수, 출금 음수) |
+| 잔액 | I열 | **자동** |
+| 내용 (회비 / 서버비 등) | E열 | **수동** |
+| 비고 (납부 월 등) | G열 | **수동** |
+
+소계·합계 수식도 행 번호에 맞게 자동 갱신됩니다.
+
+### 환경 설정 (Google Sheets 사용 시)
+
+| 변수 | 설명 |
+|---|---|
+| `GOOGLE_OAUTH_CLIENT_JSON` | OAuth 데스크톱 앱 클라이언트 시크릿 JSON 경로 |
+
+> 최초 실행 시 브라우저 인증이 열립니다. 이후 `.google_token.json`에 토큰이 캐시되어 재인증 없이 사용 가능합니다.
+
+### 준비
+
+`신한_거래내역/` 디렉토리에 거래내역 파일을 저장합니다.
+
+```
+신한_거래내역/신한_거래내역_2602.xlsx   ← YYMM 형식
+```
+
+### 사용법
+
+```bash
+python fill_ledger.py                              # 가장 최신 거래내역 파일 자동 선택
+python fill_ledger.py 신한_거래내역/신한_거래내역_2602.xlsx
+python fill_ledger.py --force                      # 이미 기입된 월도 덮어쓰기
+python fill_ledger.py -o output/관리문서_수정본.xlsx
+```
+
+실행 시 `재학생 회비 관리 문서_*.xlsx` 파일 중 가장 최신 날짜 파일을 자동으로 선택합니다.
+
+### 출력 결과
+
+원본 파일명에 오늘 날짜가 붙은 파일이 생성됩니다.
+
+```
+재학생 회비 관리 문서_20260225_20260226.xlsx
+```
+
+---
+
+## 3. 회비 미납자 확인 및 Slack DM 발송 (`fee_check.py`)
 
 재학생 회비 납부 문서에서 미납자를 집계하고, 개인별 알림 메시지 파일을 생성합니다.
 `--send-dm` 옵션을 사용하면 미납자에게 Slack DM을 자동으로 발송합니다.
@@ -135,6 +187,7 @@ python fee_check.py --send-dm
 
 ```
 ├── main.py                        # 장부 자동화 진입점
+├── fill_ledger.py                 # 거래내역 → 관리 문서 자동 기입 진입점
 ├── fee_check.py                   # 회비 미납자 확인 진입점
 ├── ledger/
 │   ├── membership_fee_parser.py   # 재학생 회비 관리 문서 → 장부 변환
