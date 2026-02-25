@@ -12,7 +12,6 @@
     python fill_ledger.py --force                # 이미 기입된 월도 덮어쓰기
 """
 
-import glob
 import io
 import os
 import re
@@ -20,7 +19,6 @@ import sys
 import argparse
 import tempfile
 from copy import copy
-from datetime import datetime
 from urllib.parse import urlparse, parse_qs
 
 import openpyxl
@@ -29,8 +27,6 @@ from openpyxl.styles import Border, Side
 # ============================================================================
 # Constants
 # ============================================================================
-
-MANAGEMENT_PATTERN = "재학생 회비 관리 문서_*.xlsx"
 
 # 관리 문서 컬럼 (1-based)
 COL_MONTH = 3   # C: 월
@@ -48,11 +44,6 @@ COL_BALANCE = 9 # I: 잔액
 
 GOOGLE_TOKEN_FILE = '.google_token.json'
 _GOOGLE_SCOPES = ['https://www.googleapis.com/auth/drive']
-
-
-def _is_sheets_url(s):
-    """Google Sheets URL 여부 확인."""
-    return isinstance(s, str) and 'docs.google.com/spreadsheets' in s
 
 
 def _extract_sheet_id(url):
@@ -241,17 +232,6 @@ def get_year_month_from_filename(filepath):
         raise ValueError(f"파일명에서 연도/월을 파싱할 수 없습니다: {basename}")
     yy, mm = int(match.group(1)), int(match.group(2))
     return 2000 + yy, mm
-
-
-def find_management_file():
-    """가장 최신 재학생 회비 관리 문서 경로 반환."""
-    files = glob.glob(MANAGEMENT_PATTERN)
-    if not files:
-        return None
-    date_re = re.compile(r'_(\d{8})\.xlsx$')
-    dated = [(date_re.search(f), f) for f in files]
-    dated = [(m.group(1), f) for m, f in dated if m]
-    return max(dated, key=lambda x: x[0])[1] if dated else files[0]
 
 
 # ============================================================================
@@ -528,14 +508,6 @@ def main():
         help="거래내역 파일 경로 (미지정 시 TRANSACTION_DRIVE_URL에서 다운로드)",
     )
     parser.add_argument(
-        "-o", "--output",
-        help="출력 파일 경로 (미지정 시 원본 파일명_YYYYMMDD.xlsx)",
-    )
-    parser.add_argument(
-        "-m", "--management",
-        help="관리 문서 경로 또는 Google Sheets URL (미지정 시 로컬 자동 탐색)",
-    )
-    parser.add_argument(
         "--force",
         action="store_true",
         help="이미 데이터가 기입된 월도 강제로 덮어쓰기",
@@ -576,27 +548,23 @@ def main():
         sys.exit(1)
     print(f"[INFO] 대상: {year}년 {month}월")
 
-    # 관리 문서 결정
-    mgmt_arg = args.management
-    is_remote = _is_sheets_url(mgmt_arg)
+    # 관리 문서 결정 (MANAGEMENT_SHEET_URL)
+    management_sheet_url = os.getenv('MANAGEMENT_SHEET_URL')
+    if not management_sheet_url:
+        print(f"[ERROR] MANAGEMENT_SHEET_URL 환경변수가 설정되지 않았습니다.")
+        sys.exit(1)
+
     sheet_id = None
     tmp_path = None
 
-    if is_remote:
-        print(f"[INFO] 관리 문서 (원격): {mgmt_arg}")
-        try:
-            sheet_id, tmp_path = download_sheet_as_xlsx(mgmt_arg)
-            mgmt_file = tmp_path
-            print(f"[INFO] 다운로드 완료 → 임시 파일: {tmp_path}")
-        except Exception as e:
-            print(f"[ERROR] Google Sheets 다운로드 실패: {e}")
-            sys.exit(1)
-    else:
-        mgmt_file = mgmt_arg or find_management_file()
-        if not mgmt_file:
-            print(f"[ERROR] 재학생 회비 관리 문서를 찾을 수 없습니다.")
-            sys.exit(1)
-        print(f"[INFO] 관리 문서: {mgmt_file}")
+    print(f"[INFO] 관리 문서 (원격): {management_sheet_url}")
+    try:
+        sheet_id, tmp_path = download_sheet_as_xlsx(management_sheet_url)
+        mgmt_file = tmp_path
+        print(f"[INFO] 다운로드 완료 → 임시 파일: {tmp_path}")
+    except Exception as e:
+        print(f"[ERROR] Google Sheets 다운로드 실패: {e}")
+        sys.exit(1)
 
     # 거래내역 파싱
     transactions = parse_transaction_file(tx_file)
@@ -619,35 +587,24 @@ def main():
     # 합계 수식 갱신
     update_total_formula(ws)
 
-    # 저장
-    if args.output:
-        out_file = args.output
-    elif is_remote:
-        out_file = tmp_path  # 임시 파일에 덮어쓴 후 업로드
-    else:
-        base = os.path.splitext(mgmt_file)[0]
-        today = datetime.now().strftime("%Y%m%d")
-        out_file = f"{base}_{today}.xlsx"
-
+    # 저장 후 업로드
+    out_file = tmp_path
     wb.save(out_file)
 
     print()
     print("=" * 60)
 
-    if is_remote:
-        try:
-            print(f"[INFO] Google Sheets로 업로드 중...")
-            upload_xlsx_to_sheet(sheet_id, out_file)
-            print(f"[INFO] 업로드 완료: {mgmt_arg}")
-        except Exception as e:
-            print(f"[ERROR] 업로드 실패: {e}")
-            print(f"[INFO] 로컬 파일은 보존됩니다: {out_file}")
-            sys.exit(1)
-        finally:
-            if tmp_path and out_file == tmp_path and os.path.exists(tmp_path):
-                os.remove(tmp_path)
-    else:
-        print(f"[INFO] 저장 완료: {out_file}")
+    try:
+        print(f"[INFO] Google Sheets로 업로드 중...")
+        upload_xlsx_to_sheet(sheet_id, out_file)
+        print(f"[INFO] 업로드 완료: {management_sheet_url}")
+    except Exception as e:
+        print(f"[ERROR] 업로드 실패: {e}")
+        print(f"[INFO] 로컬 임시 파일은 보존됩니다: {out_file}")
+        sys.exit(1)
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            os.remove(tmp_path)
 
     print(f"[INFO] 아래 항목은 수동으로 기입해주세요:")
     print(f"       - E열 (내용): 회비 / 서버비 / 회식비 등")
