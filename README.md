@@ -85,6 +85,8 @@ python main.py "재학생 회비 관리 문서_20260225.xlsx" 2025-11 2026-02
 | `DB_TABLE` | 회원 테이블명 |
 | `DB_COL_NAME` | 이름 컬럼명 (기본값: `name`) |
 | `DB_COL_SLACK_ID` | Slack ID 컬럼명 (기본값: `slack_id`) |
+| `DB_COL_TRACK_ID` | 트랙 FK 컬럼명 (기본값: `track_id`) |
+| `DB_COL_IS_DELETED` | 삭제 여부 컬럼명 (기본값: `is_deleted`) |
 | `DB_TRACK_TABLE` | 트랙 테이블명 |
 | `DB_TRACK_COL_ID` | 트랙 PK 컬럼명 (기본값: `id`) |
 | `DB_TRACK_COL_NAME` | 트랙명 컬럼명 (기본값: `name`) |

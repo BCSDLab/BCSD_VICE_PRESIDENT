@@ -202,14 +202,14 @@ def calculate_unpaid_months(row_data, sheet_name, current_month):
 
 def _validate_identifier(value):
     """SQL 식별자 검증: 영문자·숫자·언더스코어만 허용 (SQL 인젝션 방지)"""
-    if not re.match(r'^[A-Za-z_][A-Za-z0-9_]*$', value):
+    if not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', value):
         raise ValueError(f"유효하지 않은 SQL 식별자: '{value}'")
     return value
 
 
 def _normalize_track(track):
     """트랙명 정규화: 영문자만 추출 후 소문자 변환 (예: 'FrontEnd' → 'frontend')"""
-    if not track:
+    if track is None:
         return ""
     return re.sub(r'[^a-zA-Z]', '', track).lower()
 
@@ -234,7 +234,9 @@ def _ssh_tunnel(ssh_host, ssh_port, ssh_user, remote_host, remote_port, ssh_key_
 
     client.connect(ssh_host, **connect_kwargs)
     transport = client.get_transport()
-    assert transport is not None
+    if transport is None:
+        client.close()
+        raise RuntimeError("SSH 연결 후 transport를 가져올 수 없습니다.")
 
     class _ForwardHandler(socketserver.BaseRequestHandler):
         def handle(self):
@@ -313,26 +315,23 @@ def _db_connection():
 
 def fetch_slack_id_map():
     """DB에서 (이름, 트랙명) → Slack ID 매핑 조회 (readonly SELECT)"""
-    table       = _validate_identifier(os.getenv("DB_TABLE", ""))
-    col_name    = _validate_identifier(os.getenv("DB_COL_NAME", "name"))
-    col_slack_id = _validate_identifier(os.getenv("DB_COL_SLACK_ID", "slack_id"))
-    track_table  = _validate_identifier(os.getenv("DB_TRACK_TABLE", ""))
+    table          = _validate_identifier(os.getenv("DB_TABLE", ""))
+    col_name       = _validate_identifier(os.getenv("DB_COL_NAME", "name"))
+    col_slack_id   = _validate_identifier(os.getenv("DB_COL_SLACK_ID", "slack_id"))
+    col_track_id   = _validate_identifier(os.getenv("DB_COL_TRACK_ID", "track_id"))
+    col_is_deleted = _validate_identifier(os.getenv("DB_COL_IS_DELETED", "is_deleted"))
+    track_table    = _validate_identifier(os.getenv("DB_TRACK_TABLE", ""))
     track_col_id   = _validate_identifier(os.getenv("DB_TRACK_COL_ID", "id"))
     track_col_name = _validate_identifier(os.getenv("DB_TRACK_COL_NAME", "name"))
-
-    if not table:
-        raise ValueError("DB_TABLE 환경 변수가 설정되지 않았습니다.")
-    if not track_table:
-        raise ValueError("DB_TRACK_TABLE 환경 변수가 설정되지 않았습니다.")
 
     with _db_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 f"SELECT m.`{col_name}`, t.`{track_col_name}` AS track_name, m.`{col_slack_id}`"
                 f" FROM `{table}` m"
-                f" JOIN `{track_table}` t ON m.`track_id` = t.`{track_col_id}`"
+                f" JOIN `{track_table}` t ON m.`{col_track_id}` = t.`{track_col_id}`"
                 f" WHERE m.`{col_slack_id}` IS NOT NULL AND m.`{col_slack_id}` != ''"
-                f" AND m.`is_deleted` = 0 AND t.`is_deleted` = 0"
+                f" AND m.`{col_is_deleted}` = 0 AND t.`{col_is_deleted}` = 0"
             )
             return {
                 (row[col_name], _normalize_track(row["track_name"])): row[col_slack_id]
@@ -483,12 +482,13 @@ def generate_message_files(unpaid_data, output_dir, template_path):
     files_generated = 0
     total_unpaid_amount = 0
 
+    sender_name = os.getenv("SENDER_NAME", "")
+    sender_phone = os.getenv("SENDER_PHONE", "")
+
     for (name, track), data in unpaid_data.items():
         unpaid_amount = data["unpaid_amount"]
         formatted_amount = format_amount(unpaid_amount)
 
-        sender_name = os.getenv("SENDER_NAME", "")
-        sender_phone = os.getenv("SENDER_PHONE", "")
         message = template_content.replace("{발신자}", sender_name)
         message = message.replace("{전화번호}", sender_phone)
         message = message.replace("{멘션}", f"@{sender_name}" if sender_name else "{멘션}")
