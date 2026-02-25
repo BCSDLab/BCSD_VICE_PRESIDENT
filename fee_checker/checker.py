@@ -9,6 +9,7 @@ import sys
 import re
 import glob
 import argparse
+from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -197,6 +198,134 @@ def calculate_unpaid_months(row_data, sheet_name, current_month):
             unpaid_count += 1
 
     return unpaid_count
+
+
+def _normalize_track(track):
+    """트랙명 정규화: 영문자만 추출 후 소문자 변환 (예: 'FrontEnd' → 'frontend')"""
+    return re.sub(r'[^a-zA-Z]', '', track).lower()
+
+
+@contextmanager
+def _ssh_tunnel(ssh_host, ssh_port, ssh_user, remote_host, remote_port, ssh_key_path=None, ssh_password=None):
+    """paramiko 기반 SSH 포트 포워딩 터널"""
+    import select
+    import threading
+    import socketserver
+    import paramiko
+
+    client = paramiko.SSHClient()
+    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+
+    connect_kwargs: dict = {"port": ssh_port, "username": ssh_user}
+    if ssh_key_path:
+        connect_kwargs["key_filename"] = os.path.expanduser(ssh_key_path)
+    else:
+        connect_kwargs["password"] = ssh_password
+
+    client.connect(ssh_host, **connect_kwargs)
+    transport = client.get_transport()
+    assert transport is not None
+
+    class _ForwardHandler(socketserver.BaseRequestHandler):
+        def handle(self):
+            chan = transport.open_channel(
+                "direct-tcpip",
+                (remote_host, remote_port),
+                self.request.getpeername(),
+            )
+            if chan is None:
+                return
+            while True:
+                readable = select.select([self.request, chan], [], [], 5)[0]
+                if self.request in readable:
+                    data = self.request.recv(1024)
+                    if not data:
+                        break
+                    chan.send(data)
+                if chan in readable:
+                    data = chan.recv(1024)
+                    if not data:
+                        break
+                    self.request.send(data)
+            chan.close()
+
+    server = socketserver.ThreadingTCPServer(("127.0.0.1", 0), _ForwardHandler)
+    local_port = server.server_address[1]
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+
+    try:
+        yield local_port
+    finally:
+        server.shutdown()
+        client.close()
+
+
+@contextmanager
+def _db_connection():
+    """SSH 터널 경유 MySQL 연결 컨텍스트 매니저 (readonly)"""
+    try:
+        import pymysql
+    except ImportError:
+        raise ImportError("필요한 패키지: pip install pymysql paramiko")
+
+    ssh_host = os.getenv("SSH_HOST", "")
+    ssh_port = int(os.getenv("SSH_PORT", "22"))
+    ssh_user = os.getenv("SSH_USER", "")
+    ssh_key_path = os.getenv("SSH_KEY_PATH")
+    ssh_password = os.getenv("SSH_PASSWORD", "")
+
+    db_host = os.getenv("DB_HOST", "127.0.0.1")
+    db_port = int(os.getenv("DB_PORT", "3306"))
+    db_name = os.getenv("DB_NAME", "")
+    db_user = os.getenv("DB_USER", "")
+    db_password = os.getenv("DB_PASSWORD", "")
+
+    assert ssh_host, "SSH_HOST 환경 변수가 설정되지 않았습니다."
+    assert ssh_user, "SSH_USER 환경 변수가 설정되지 않았습니다."
+
+    with _ssh_tunnel(ssh_host, ssh_port, ssh_user, db_host, db_port, ssh_key_path, ssh_password) as local_port:
+        conn = pymysql.connect(
+            host="127.0.0.1",
+            port=local_port,
+            user=db_user,
+            password=db_password,
+            database=db_name,
+            charset="utf8mb4",
+            cursorclass=pymysql.cursors.DictCursor,
+        )
+        try:
+            yield conn
+        finally:
+            conn.close()
+
+
+def fetch_slack_id_map():
+    """DB에서 (이름, 트랙명) → Slack ID 매핑 조회 (readonly SELECT)"""
+    table = os.getenv("DB_TABLE", "")
+    col_name = os.getenv("DB_COL_NAME", "")
+    col_slack_id = os.getenv("DB_COL_SLACK_ID", "")
+    track_table = os.getenv("DB_TRACK_TABLE", "")
+    track_col_id = os.getenv("DB_TRACK_COL_ID", "id")
+    track_col_name = os.getenv("DB_TRACK_COL_NAME", "name")
+
+    assert table, "DB_TABLE 환경 변수가 설정되지 않았습니다."
+    assert col_name, "DB_COL_NAME 환경 변수가 설정되지 않았습니다."
+    assert col_slack_id, "DB_COL_SLACK_ID 환경 변수가 설정되지 않았습니다."
+    assert track_table, "DB_TRACK_TABLE 환경 변수가 설정되지 않았습니다."
+
+    with _db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"SELECT m.`{col_name}`, t.`{track_col_name}` AS track_name, m.`{col_slack_id}`"
+                f" FROM `{table}` m"
+                f" JOIN `{track_table}` t ON m.`track_id` = t.`{track_col_id}`"
+                f" WHERE m.`{col_slack_id}` IS NOT NULL AND m.`{col_slack_id}` != ''"
+                f" AND m.`is_deleted` = 0 AND t.`is_deleted` = 0"
+            )
+            return {
+                (row[col_name], _normalize_track(row["track_name"])): row[col_slack_id]
+                for row in cur.fetchall()
+            }
 
 
 def aggregate_unpaid_fees(wb, current_month, excluded_tracks=None):
