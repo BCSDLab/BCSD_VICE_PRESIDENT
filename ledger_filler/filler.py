@@ -25,6 +25,7 @@ from urllib.parse import urlparse, parse_qs
 
 import openpyxl
 from openpyxl.styles import Border, Side
+from openpyxl.utils import get_column_letter
 from openpyxl.utils.exceptions import InvalidFileException
 
 # ============================================================================
@@ -39,6 +40,11 @@ COL_NAME = 6    # F: 이름
 COL_NOTE = 7    # G: 비고 (수동 기입)
 COL_AMOUNT = 8  # H: 입/출
 COL_BALANCE = 9 # I: 잔액
+
+# 수식 작성에 사용할 열 문자 (COL_* 상수에서 파생)
+_L_DESC    = get_column_letter(COL_DESC)    # E
+_L_NOTE    = get_column_letter(COL_NOTE)    # G
+_L_AMOUNT  = get_column_letter(COL_AMOUNT)  # H
 
 
 # ============================================================================
@@ -470,11 +476,11 @@ def fill_month(ws, month, transactions, force=False):
     # 소계 수식 갱신
     ws.cell(row=sogyeyu_row, column=COL_MONTH).value = '소계'
     ws.cell(row=sogyeyu_row, column=COL_DATE).value = '입금'
-    ws.cell(row=sogyeyu_row, column=COL_DESC).value = f'=SUMIF(H{header_row}:H{data_end},">0")'
+    ws.cell(row=sogyeyu_row, column=COL_DESC).value = f'=SUMIF({_L_AMOUNT}{header_row}:{_L_AMOUNT}{data_end},">0")'
     ws.cell(row=sogyeyu_row, column=COL_NAME).value = '출금'
-    ws.cell(row=sogyeyu_row, column=COL_NOTE).value = f'=SUMIF(H{header_row}:H{data_end},"<0")*-1'
+    ws.cell(row=sogyeyu_row, column=COL_NOTE).value = f'=SUMIF({_L_AMOUNT}{header_row}:{_L_AMOUNT}{data_end},"<0")*-1'
     ws.cell(row=sogyeyu_row, column=COL_AMOUNT).value = '합계'
-    ws.cell(row=sogyeyu_row, column=COL_BALANCE).value = f'=E{sogyeyu_row}-G{sogyeyu_row}'
+    ws.cell(row=sogyeyu_row, column=COL_BALANCE).value = f'={_L_DESC}{sogyeyu_row}-{_L_NOTE}{sogyeyu_row}'
 
     print(f"[INFO] {month_label} 거래 {tx_count}건 기입 완료 (행 {header_row}~{data_end}, 소계 행 {sogyeyu_row})")
     return True
@@ -494,8 +500,8 @@ def update_total_formula(ws):
     if not sogyeyu_rows:
         return
 
-    sum_e = ','.join(f'E{r}' for r in sogyeyu_rows)
-    sum_g = ','.join(f'G{r}' for r in sogyeyu_rows)
+    sum_e = ','.join(f'{_L_DESC}{r}' for r in sogyeyu_rows)
+    sum_g = ','.join(f'{_L_NOTE}{r}' for r in sogyeyu_rows)
 
     ws.cell(row=total_row, column=COL_MONTH).value = '합계'
     ws.cell(row=total_row, column=COL_DATE).value = '입금'
@@ -503,7 +509,7 @@ def update_total_formula(ws):
     ws.cell(row=total_row, column=COL_NAME).value = '출금'
     ws.cell(row=total_row, column=COL_NOTE).value = f'=SUM({sum_g})'
     ws.cell(row=total_row, column=COL_AMOUNT).value = '합계'
-    ws.cell(row=total_row, column=COL_BALANCE).value = f'=E{total_row}-G{total_row}'
+    ws.cell(row=total_row, column=COL_BALANCE).value = f'={_L_DESC}{total_row}-{_L_NOTE}{total_row}'
 
     print(f"[INFO] 합계 행({total_row}) 수식 갱신 완료")
 
@@ -563,7 +569,7 @@ def main():
                 tx_original_name, tx_tmp_path = download_transaction_from_drive(tx_drive_url)
                 tx_file = tx_tmp_path
                 print(f"[INFO] 다운로드 완료: {tx_original_name}")
-            except Exception as e:
+            except (FileNotFoundError, ValueError, OSError) as e:
                 print(f"[ERROR] 거래내역 Drive 다운로드 실패: {e}")
                 sys.exit(1)
 
@@ -588,7 +594,7 @@ def main():
             sheet_id, tmp_path = download_sheet_as_xlsx(management_sheet_url)
             mgmt_file = tmp_path
             print(f"[INFO] 다운로드 완료 → 임시 파일: {tmp_path}")
-        except Exception as e:
+        except (ValueError, OSError) as e:
             print(f"[ERROR] Google Sheets 다운로드 실패: {e}")
             sys.exit(1)
 
@@ -624,7 +630,11 @@ def main():
         update_total_formula(ws)
 
         # 저장 후 업로드
-        wb.save(tmp_path)
+        try:
+            wb.save(tmp_path)
+        except OSError as e:
+            print(f"[ERROR] 임시 파일 저장 실패: {e}")
+            sys.exit(1)
 
         print()
         print("=" * 60)
@@ -633,7 +643,7 @@ def main():
             upload_xlsx_to_sheet(sheet_id, tmp_path)
             print(f"[INFO] 업로드 완료: {management_sheet_url}")
             upload_ok = True
-        except Exception as e:
+        except (OSError, ValueError) as e:
             print(f"[ERROR] 업로드 실패: {e}")
             preserve_tmp_path = True
 
