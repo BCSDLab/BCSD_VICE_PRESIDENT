@@ -260,8 +260,19 @@ def parse_transaction_file(filepath):
             no, date_str, deposit, withdrawal, name, balance = row[:6]
             if no is None:
                 continue
-            deposit = deposit or 0
-            withdrawal = withdrawal or 0
+            def _to_number(value):
+                if isinstance(value, (int, float)):
+                    return float(value)
+                if isinstance(value, str):
+                    raw = value.replace(',', '').strip()
+                    try:
+                        return float(raw) if raw else 0.0
+                    except ValueError:
+                        return 0.0
+                return 0.0
+
+            deposit = _to_number(deposit)
+            withdrawal = _to_number(withdrawal)
             if deposit > 0:
                 amount = deposit
             elif withdrawal > 0:
@@ -481,7 +492,12 @@ def fill_month(ws, month, transactions, force=False):
             desc = ws.cell(row=r, column=COL_DESC).value
             note = ws.cell(row=r, column=COL_NOTE).value
             if desc or note:
-                print(f"[WARNING] 행 {r}의 수동 기입 항목이 삭제됩니다: E열={desc!r}, G열={note!r}")
+                cols = []
+                if desc:
+                    cols.append("E열")
+                if note:
+                    cols.append("G열")
+                print(f"[WARNING] 행 {r}의 수동 기입 항목({', '.join(cols)})이 삭제됩니다.")
         downstream = _collect_and_unmerge_downstream_c(ws, sogyeyu_row)
         ws.delete_rows(header_row + tx_count, rows_to_delete)
         sogyeyu_row -= rows_to_delete
