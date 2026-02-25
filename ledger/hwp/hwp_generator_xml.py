@@ -9,7 +9,8 @@ import itertools
 import os
 import zipfile
 from lxml import etree
-from PIL import Image
+from PIL import Image, UnidentifiedImageError
+from PIL.Image import DecompressionBombError
 
 from ledger.hwp.image_packer import Img, _layout
 
@@ -351,7 +352,18 @@ def run(data, t_path: str, o_path: str):
     # 6. 지출 행마다 표 생성 (data_idx = 장부 전체 기준 0-based 인덱스 → +1이 장부 순번)
     for data_idx, row in data.iterrows():
         title     = f'{data_idx + 1}. {row["종류"]}'
-        img_paths = row.get('img_paths', []) or []
+        raw = row.get('img_paths', [])
+        if isinstance(raw, list):
+            img_paths = raw
+        elif raw is None:
+            img_paths = []
+        elif isinstance(raw, str):
+            img_paths = [raw]
+        else:
+            try:
+                img_paths = list(raw)
+            except TypeError:
+                img_paths = []
 
         img_rows: list[list] = []
         if img_paths:
@@ -359,7 +371,7 @@ def run(data, t_path: str, o_path: str):
             for p in img_paths:
                 try:
                     imgs.append(Img(p))
-                except Exception as e:
+                except (OSError, UnidentifiedImageError, DecompressionBombError) as e:
                     print(f"  [{data_idx + 1}] 이미지 로드 실패: {p} ({e}) — 건너뜀")
 
             if not imgs:
