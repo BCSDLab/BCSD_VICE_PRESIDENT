@@ -339,7 +339,7 @@ def _remerge_with_offset(ws, ranges, delta):
     for min_row, max_row in ranges:
         new_min = min_row + delta
         new_max = max_row + delta
-        if new_max > new_min:
+        if new_max >= new_min:
             ws.merge_cells(
                 start_row=new_min, start_column=COL_MONTH,
                 end_row=new_max, end_column=COL_MONTH,
@@ -433,11 +433,7 @@ def fill_month(ws, month, transactions, force=False):
             _apply_row_styles(ws, row_idx, row_style)
         ws.cell(row=row_idx, column=COL_MONTH).value = month_label if i == 0 else None
         ws.cell(row=row_idx, column=COL_DATE).value = date_str
-        if not ws.cell(row=row_idx, column=COL_DESC).value:
-            ws.cell(row=row_idx, column=COL_DESC).value = None    # 수동 기입
         ws.cell(row=row_idx, column=COL_NAME).value = name
-        if not ws.cell(row=row_idx, column=COL_NOTE).value:
-            ws.cell(row=row_idx, column=COL_NOTE).value = None    # 수동 기입
         ws.cell(row=row_idx, column=COL_AMOUNT).value = amount
         ws.cell(row=row_idx, column=COL_BALANCE).value = balance
 
