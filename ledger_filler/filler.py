@@ -524,102 +524,100 @@ def main():
     print("신한 거래내역 → 재학생 회비 관리 문서 자동 기입")
     print("=" * 60)
 
-    # 거래내역 파일 결정
-    tx_original_name = None
     tx_tmp_path = None
-
-    if args.transaction_file:
-        tx_file = args.transaction_file
-    else:
-        tx_drive_url = os.getenv('TRANSACTION_DRIVE_URL')
-        if not tx_drive_url:
-            print("[ERROR] TRANSACTION_DRIVE_URL 환경변수가 설정되지 않았습니다.")
-            sys.exit(1)
-        print("\n[INFO] 거래내역 Drive에서 다운로드 중...")
-        try:
-            tx_original_name, tx_tmp_path = download_transaction_from_drive(tx_drive_url)
-            tx_file = tx_tmp_path
-            print(f"[INFO] 다운로드 완료: {tx_original_name}")
-        except Exception as e:
-            print(f"[ERROR] 거래내역 Drive 다운로드 실패: {e}")
-            sys.exit(1)
-
-    print(f"\n[INFO] 거래내역 파일: {tx_original_name or tx_file}")
-
-    # 연도/월 파싱: Drive에서 받은 경우 원본 파일명 기준
-    try:
-        year, month = get_year_month_from_filename(tx_original_name or tx_file)
-    except ValueError as e:
-        print(f"[ERROR] {e}")
-        sys.exit(1)
-    print(f"[INFO] 대상: {year}년 {month}월")
-
-    # 관리 문서 결정 (MANAGEMENT_SHEET_URL)
-    management_sheet_url = os.getenv('MANAGEMENT_SHEET_URL')
-    if not management_sheet_url:
-        print("[ERROR] MANAGEMENT_SHEET_URL 환경변수가 설정되지 않았습니다.")
-        sys.exit(1)
-
-    sheet_id = None
     tmp_path = None
-
-    print(f"[INFO] 관리 문서 (원격): {management_sheet_url}")
-    try:
-        sheet_id, tmp_path = download_sheet_as_xlsx(management_sheet_url)
-        mgmt_file = tmp_path
-        print(f"[INFO] 다운로드 완료 → 임시 파일: {tmp_path}")
-    except Exception as e:
-        print(f"[ERROR] Google Sheets 다운로드 실패: {e}")
-        sys.exit(1)
-
-    # 거래내역 파싱
-    transactions = parse_transaction_file(tx_file)
-    print(f"[INFO] 파싱된 거래 건수: {len(transactions)}건")
-
-    # 관리 문서 열기
-    wb = openpyxl.load_workbook(mgmt_file)
-    sheet_name = f"{year}년"
-    if sheet_name not in wb.sheetnames:
-        print(f"[ERROR] 시트 '{sheet_name}'를 찾을 수 없습니다. (존재하는 시트: {wb.sheetnames})")
-        sys.exit(1)
-    ws = wb[sheet_name]
-
-    # 데이터 기입
-    print()
-    success = fill_month(ws, month, transactions, force=args.force)
-    if not success:
-        sys.exit(1)
-
-    # 합계 수식 갱신
-    update_total_formula(ws)
-
-    # 저장 후 업로드
-    out_file = tmp_path
-    wb.save(out_file)
-
-    print()
-    print("=" * 60)
-
     upload_ok = False
+
     try:
-        print("[INFO] Google Sheets로 업로드 중...")
-        upload_xlsx_to_sheet(sheet_id, out_file)
-        print(f"[INFO] 업로드 완료: {management_sheet_url}")
-        upload_ok = True
-    except Exception as e:
-        print(f"[ERROR] 업로드 실패: {e}")
-        print(f"[INFO] 로컬 임시 파일은 보존됩니다: {out_file}")
+        # 거래내역 파일 결정
+        tx_original_name = None
+        if args.transaction_file:
+            tx_file = args.transaction_file
+        else:
+            tx_drive_url = os.getenv('TRANSACTION_DRIVE_URL')
+            if not tx_drive_url:
+                print("[ERROR] TRANSACTION_DRIVE_URL 환경변수가 설정되지 않았습니다.")
+                sys.exit(1)
+            print("\n[INFO] 거래내역 Drive에서 다운로드 중...")
+            try:
+                tx_original_name, tx_tmp_path = download_transaction_from_drive(tx_drive_url)
+                tx_file = tx_tmp_path
+                print(f"[INFO] 다운로드 완료: {tx_original_name}")
+            except Exception as e:
+                print(f"[ERROR] 거래내역 Drive 다운로드 실패: {e}")
+                sys.exit(1)
+
+        print(f"\n[INFO] 거래내역 파일: {tx_original_name or tx_file}")
+
+        # 연도/월 파싱: Drive에서 받은 경우 원본 파일명 기준
+        try:
+            year, month = get_year_month_from_filename(tx_original_name or tx_file)
+        except ValueError as e:
+            print(f"[ERROR] {e}")
+            sys.exit(1)
+        print(f"[INFO] 대상: {year}년 {month}월")
+
+        # 관리 문서 결정 (MANAGEMENT_SHEET_URL)
+        management_sheet_url = os.getenv('MANAGEMENT_SHEET_URL')
+        if not management_sheet_url:
+            print("[ERROR] MANAGEMENT_SHEET_URL 환경변수가 설정되지 않았습니다.")
+            sys.exit(1)
+
+        print(f"[INFO] 관리 문서 (원격): {management_sheet_url}")
+        try:
+            sheet_id, tmp_path = download_sheet_as_xlsx(management_sheet_url)
+            mgmt_file = tmp_path
+            print(f"[INFO] 다운로드 완료 → 임시 파일: {tmp_path}")
+        except Exception as e:
+            print(f"[ERROR] Google Sheets 다운로드 실패: {e}")
+            sys.exit(1)
+
+        # 거래내역 파싱
+        transactions = parse_transaction_file(tx_file)
+        print(f"[INFO] 파싱된 거래 건수: {len(transactions)}건")
+
+        # 관리 문서 열기
+        wb = openpyxl.load_workbook(mgmt_file)
+        sheet_name = f"{year}년"
+        if sheet_name not in wb.sheetnames:
+            print(f"[ERROR] 시트 '{sheet_name}'를 찾을 수 없습니다. (존재하는 시트: {wb.sheetnames})")
+            sys.exit(1)
+        ws = wb[sheet_name]
+
+        # 데이터 기입
+        print()
+        success = fill_month(ws, month, transactions, force=args.force)
+        if not success:
+            sys.exit(1)
+
+        # 합계 수식 갱신
+        update_total_formula(ws)
+
+        # 저장 후 업로드
+        wb.save(tmp_path)
+
+        print()
+        print("=" * 60)
+        try:
+            print("[INFO] Google Sheets로 업로드 중...")
+            upload_xlsx_to_sheet(sheet_id, tmp_path)
+            print(f"[INFO] 업로드 완료: {management_sheet_url}")
+            upload_ok = True
+        except Exception as e:
+            print(f"[ERROR] 업로드 실패: {e}")
+
+        if not upload_ok:
+            sys.exit(1)
+
+        print("[INFO] 아래 항목은 수동으로 기입해주세요:")
+        print("       - E열 (내용): 회비 / 서버비 / 회식비 등")
+        print("       - G열 (비고): 납부 월 등")
+        print("=" * 60)
+
     finally:
+        if tx_tmp_path and os.path.exists(tx_tmp_path):
+            os.remove(tx_tmp_path)
         if upload_ok and tmp_path and os.path.exists(tmp_path):
             os.remove(tmp_path)
-
-    if not upload_ok:
-        sys.exit(1)
-
-    print("[INFO] 아래 항목은 수동으로 기입해주세요:")
-    print("       - E열 (내용): 회비 / 서버비 / 회식비 등")
-    print("       - G열 (비고): 납부 월 등")
-    print("=" * 60)
-
-    if tx_tmp_path and os.path.exists(tx_tmp_path):
-        os.remove(tx_tmp_path)
+        elif not upload_ok and tmp_path and os.path.exists(tmp_path):
+            print(f"[INFO] 로컬 임시 파일은 보존됩니다: {tmp_path}")
