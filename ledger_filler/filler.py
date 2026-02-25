@@ -18,12 +18,14 @@ import re
 import sys
 import argparse
 import tempfile
+import zipfile
 from copy import copy
 from datetime import datetime
 from urllib.parse import urlparse, parse_qs
 
 import openpyxl
 from openpyxl.styles import Border, Side
+from openpyxl.utils.exceptions import InvalidFileException
 
 # ============================================================================
 # Constants
@@ -102,6 +104,7 @@ def download_sheet_as_xlsx(url):
     request = drive.files().export_media(
         fileId=sheet_id,
         mimeType='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        supportsAllDrives=True,
     )
 
     buf = io.BytesIO()
@@ -133,6 +136,8 @@ def _find_latest_transaction_in_folder(drive, folder_id):
         kwargs = dict(
             q=f"'{folder_id}' in parents and mimeType='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' and trashed=false",
             fields='nextPageToken, files(id, name)',
+            supportsAllDrives=True,
+            includeItemsFromAllDrives=True,
         )
         if page_token:
             kwargs['pageToken'] = page_token
@@ -165,7 +170,7 @@ def download_transaction_from_drive(url):
     drive = _get_drive_service()
     file_id, original_name = _find_latest_transaction_in_folder(drive, folder_id)
 
-    request = drive.files().get_media(fileId=file_id)
+    request = drive.files().get_media(fileId=file_id, supportsAllDrives=True)
     buf = io.BytesIO()
     downloader = MediaIoBaseDownload(buf, request)
     done = False
@@ -193,6 +198,7 @@ def upload_xlsx_to_sheet(sheet_id, local_path):
         fileId=sheet_id,
         body={'mimeType': 'application/vnd.google-apps.spreadsheet'},
         media_body=media,
+        supportsAllDrives=True,
     ).execute()
 
 
@@ -382,7 +388,9 @@ def fill_month(ws, month, transactions, force=False):
     해당 월의 거래내역을 관리 문서 시트에 기입.
 
     Returns:
-        True if successful, False otherwise
+        True  — 기입 완료
+        None  — 이미 기입된 월을 건너뜀 (성공적 no-op)
+        False — 오류
     """
     month_label = f"{month}월"
     header_row, sogyeyu_row = find_month_section(ws, month)
@@ -394,7 +402,7 @@ def fill_month(ws, month, transactions, force=False):
     if is_month_filled(ws, header_row):
         if not force:
             print(f"[WARNING] {month_label} 데이터가 이미 존재합니다. 건너뜁니다. (덮어쓰려면 --force 사용)")
-            return False
+            return None
         print(f"[INFO] {month_label} 기존 데이터를 덮어씁니다.")
 
     tx_count = len(transactions)
@@ -462,9 +470,9 @@ def fill_month(ws, month, transactions, force=False):
     # 소계 수식 갱신
     ws.cell(row=sogyeyu_row, column=COL_MONTH).value = '소계'
     ws.cell(row=sogyeyu_row, column=COL_DATE).value = '입금'
-    ws.cell(row=sogyeyu_row, column=COL_DESC).value = f'=sumif(H{header_row}:H{data_end},">0")'
+    ws.cell(row=sogyeyu_row, column=COL_DESC).value = f'=SUMIF(H{header_row}:H{data_end},">0")'
     ws.cell(row=sogyeyu_row, column=COL_NAME).value = '출금'
-    ws.cell(row=sogyeyu_row, column=COL_NOTE).value = f'=sumif(H{header_row}:H{data_end},"<0")*-1'
+    ws.cell(row=sogyeyu_row, column=COL_NOTE).value = f'=SUMIF(H{header_row}:H{data_end},"<0")*-1'
     ws.cell(row=sogyeyu_row, column=COL_AMOUNT).value = '합계'
     ws.cell(row=sogyeyu_row, column=COL_BALANCE).value = f'=E{sogyeyu_row}-G{sogyeyu_row}'
 
@@ -585,11 +593,19 @@ def main():
             sys.exit(1)
 
         # 거래내역 파싱
-        transactions = parse_transaction_file(tx_file)
+        try:
+            transactions = parse_transaction_file(tx_file)
+        except (InvalidFileException, zipfile.BadZipFile) as e:
+            print(f"[ERROR] 거래내역 파일이 손상되었거나 읽을 수 없습니다: {e}")
+            sys.exit(1)
         print(f"[INFO] 파싱된 거래 건수: {len(transactions)}건")
 
         # 관리 문서 열기
-        wb = openpyxl.load_workbook(mgmt_file)
+        try:
+            wb = openpyxl.load_workbook(mgmt_file)
+        except (InvalidFileException, zipfile.BadZipFile) as e:
+            print(f"[ERROR] 관리 문서 파일이 손상되었거나 읽을 수 없습니다: {e}")
+            sys.exit(1)
         sheet_name = f"{year}년"
         if sheet_name not in wb.sheetnames:
             print(f"[ERROR] 시트 '{sheet_name}'를 찾을 수 없습니다. (존재하는 시트: {wb.sheetnames})")
@@ -599,8 +615,10 @@ def main():
         # 데이터 기입
         print()
         success = fill_month(ws, month, transactions, force=args.force)
-        if not success:
+        if success is False:
             sys.exit(1)
+        if success is None:
+            sys.exit(0)
 
         # 합계 수식 갱신
         update_total_formula(ws)
