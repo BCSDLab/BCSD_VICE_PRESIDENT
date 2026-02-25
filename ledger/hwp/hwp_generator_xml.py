@@ -8,6 +8,7 @@ section0.xml을 파싱·수정한 뒤 다시 패킹한다.
 import itertools
 import os
 import zipfile
+from dataclasses import dataclass, field
 from lxml import etree
 from PIL import Image, UnidentifiedImageError
 from PIL.Image import DecompressionBombError
@@ -22,18 +23,56 @@ HC = 'http://www.hancom.co.kr/hwpml/2011/core'
 # 1 inch = 7200 HWP unit = 25.4 mm  →  1 mm ≈ 283.465 HWP unit
 HWP_PER_MM = 7200 / 25.4
 
-# ── 템플릿에서 읽은 셀 크기 (HWP unit) ───────────────────────────────
-CELL_W      = 51877   # 표 전체 너비
-TITLE_ROW_H = 4117    # 제목 행 높이
-IMG_CELL_H  = 25332   # 이미지 행 높이
-MARGIN_LR   = 510     # 좌우 셀 여백
-MARGIN_TB   = 141     # 상하 셀 여백
 
-# 이미지 레이아웃 기준 크기: 셀 전체 영역 (pyhwpx와 동일하게 여백 포함)
-IMG_W_HWP = CELL_W      # 51877
-IMG_H_HWP = IMG_CELL_H  # 25332
-IMG_W_MM  = IMG_W_HWP / HWP_PER_MM    # ≈ 183.0 mm
-IMG_H_MM  = IMG_H_HWP / HWP_PER_MM    # ≈ 89.4 mm
+@dataclass
+class _TemplateParams:
+    """템플릿 section0.xml에서 동적으로 추출한 레이아웃·스타일 파라미터.
+
+    추출에 실패한 항목은 기존 템플릿을 분석해 측정한 기본값을 유지한다.
+    """
+    # 셀 크기 (HWP unit)
+    cell_w:      int = 51877
+    title_row_h: int = 4117
+    img_cell_h:  int = 25332
+    # 셀 여백
+    margin_lr: int = 510
+    margin_tb: int = 141
+    # 표 outMargin (sz.height 보정용)
+    out_margin: int = 283
+    # 표 pos.vertOffset
+    vert_offset: int = 434
+    # 스타일 ID
+    border_fill_id: str = '3'
+    title_para_pr:  str = '22'
+    title_style_id: str = '22'
+    title_char_pr:  str = '13'
+    img_para_pr:    str = '20'
+    img_style_id:   str = '0'
+    img_char_pr:    str = '14'
+    wrap_para_pr:   str = '20'
+    wrap_char_pr:   str = '7'
+    # 제목 행 lineseg
+    title_lineseg: dict = field(default_factory=lambda: {
+        'textpos': '0', 'vertpos': '0', 'vertsize': '1100', 'textheight': '1100',
+        'baseline': '550', 'spacing': '0', 'horzpos': '0', 'horzsize': '50856',
+        'flags': '393216',
+    })
+    # 래퍼 단락 lineseg
+    wrap_lineseg: dict = field(default_factory=lambda: {
+        'textpos': '0', 'vertpos': '0', 'vertsize': '1700', 'textheight': '1700',
+        'baseline': '1445', 'spacing': '1020', 'horzpos': '0', 'horzsize': '0',
+        'flags': '393216',
+    })
+
+    @property
+    def img_w_mm(self) -> float:
+        """이미지 레이아웃 기준 너비 (mm) — 셀 전체 영역."""
+        return self.cell_w / HWP_PER_MM
+
+    @property
+    def img_h_mm(self) -> float:
+        """이미지 레이아웃 기준 높이 (mm) — 셀 전체 영역."""
+        return self.img_cell_h / HWP_PER_MM
 
 
 # ── 헬퍼 함수 ─────────────────────────────────────────────────────────
@@ -116,6 +155,90 @@ def _find_expense_ps(root: etree._Element) -> list:
                     result.append(p)
                     break
     return result
+
+
+def _read_template_params(expense_ps: list) -> _TemplateParams:
+    """증빙 표 템플릿에서 레이아웃·스타일 파라미터를 동적으로 추출한다.
+
+    추출에 실패한 항목은 _TemplateParams 기본값을 유지한다.
+    """
+    p = _TemplateParams()
+    if not expense_ps:
+        return p
+
+    wrap_p = expense_ps[0]
+
+    # ── 래퍼 단락 스타일 ──────────────────────────────────────────────
+    p.wrap_para_pr = wrap_p.get('paraPrIDRef', p.wrap_para_pr)
+    wrap_run = wrap_p.find(f'{{{HP}}}run')
+    if wrap_run is not None:
+        p.wrap_char_pr = wrap_run.get('charPrIDRef', p.wrap_char_pr)
+        wrap_lsa = wrap_p.find(f'{{{HP}}}linesegarray')
+        if wrap_lsa is not None and len(wrap_lsa) > 0:
+            p.wrap_lineseg = dict(wrap_lsa[0].attrib)
+
+    # ── 표 속성 ───────────────────────────────────────────────────────
+    tbl = next(
+        (t for r in (wrap_run,) if r is not None
+         for t in r if t.tag == f'{{{HP}}}tbl' and t.get('colCnt') == '1'),
+        None,
+    )
+    if tbl is None:
+        return p
+
+    p.border_fill_id = tbl.get('borderFillIDRef', p.border_fill_id)
+
+    tbl_pos = tbl.find(f'{{{HP}}}pos')
+    if tbl_pos is not None:
+        p.vert_offset = int(tbl_pos.get('vertOffset', p.vert_offset))
+
+    tbl_out = tbl.find(f'{{{HP}}}outMargin')
+    if tbl_out is not None:
+        p.out_margin = int(tbl_out.get('bottom', p.out_margin))
+
+    # ── 행별 셀 크기·스타일 ───────────────────────────────────────────
+    rows = tbl.findall(f'{{{HP}}}tr')
+    if len(rows) < 2:
+        return p
+
+    def _from_tc(tc: etree._Element | None, is_title: bool) -> None:
+        if tc is None:
+            return
+        csz = tc.find(f'{{{HP}}}cellSz')
+        if csz is not None:
+            p.cell_w = int(csz.get('width', p.cell_w))
+            if is_title:
+                p.title_row_h = int(csz.get('height', p.title_row_h))
+            else:
+                p.img_cell_h = int(csz.get('height', p.img_cell_h))
+        cm = tc.find(f'{{{HP}}}cellMargin')
+        if cm is not None:
+            p.margin_lr = int(cm.get('left', p.margin_lr))
+            p.margin_tb = int(cm.get('top',  p.margin_tb))
+        sl = tc.find(f'{{{HP}}}subList')
+        if sl is None:
+            return
+        para = sl.find(f'{{{HP}}}p')
+        if para is None:
+            return
+        run = para.find(f'{{{HP}}}run')
+        if is_title:
+            p.title_para_pr  = para.get('paraPrIDRef', p.title_para_pr)
+            p.title_style_id = para.get('styleIDRef',  p.title_style_id)
+            if run is not None:
+                p.title_char_pr = run.get('charPrIDRef', p.title_char_pr)
+            lsa = para.find(f'{{{HP}}}linesegarray')
+            if lsa is not None and len(lsa) > 0:
+                p.title_lineseg = dict(lsa[0].attrib)
+        else:
+            p.img_para_pr  = para.get('paraPrIDRef', p.img_para_pr)
+            p.img_style_id = para.get('styleIDRef',  p.img_style_id)
+            if run is not None:
+                p.img_char_pr = run.get('charPrIDRef', p.img_char_pr)
+
+    _from_tc(rows[0].find(f'{{{HP}}}tc'), is_title=True)
+    _from_tc(rows[1].find(f'{{{HP}}}tc'), is_title=False)
+    return p
 
 
 def _hp(parent: etree._Element, tag: str, attribs: dict | None = None) -> etree._Element:
@@ -201,12 +324,16 @@ def _build_pic(binary_id: str, img: Img, disp_w: int, disp_h: int, z: int) -> et
     return pic
 
 
-def _build_table(title: str, img_rows: list, z: int) -> tuple:
+def _build_table(title: str, img_rows: list, z: int, params: _TemplateParams) -> tuple:
     """
     2행 1열 증빙 표 생성.
     img_rows: 행 리스트, 각 행 = [(binary_id, Img, disp_w_hwp, disp_h_hwp), ...]
     반환: (hp:tbl 요소, 다음 z 값)
     """
+    m = str(params.margin_lr)
+    mt = str(params.margin_tb)
+    bf = params.border_fill_id
+
     tbl = etree.Element(f'{{{HP}}}tbl', {
         'id':              str(_next_id()),
         'zOrder':          str(z),
@@ -220,64 +347,67 @@ def _build_table(title: str, img_rows: list, z: int) -> tuple:
         'rowCnt':          '2',
         'colCnt':          '1',
         'cellSpacing':     '0',
-        'borderFillIDRef': '3',
+        'borderFillIDRef': bf,
         'noAdjust':        '0',
     })
     z += 1
 
-    # sz.height = 셀 합 + outMargin 1개 (pyhwpx 실측값 기준)
-    total_h = TITLE_ROW_H + IMG_CELL_H + 283
-    _hp(tbl, 'sz',  {'width': str(CELL_W), 'widthRelTo': 'ABSOLUTE',
+    om = str(params.out_margin)
+    total_h = params.title_row_h + params.img_cell_h + params.out_margin
+    _hp(tbl, 'sz',  {'width': str(params.cell_w), 'widthRelTo': 'ABSOLUTE',
                      'height': str(total_h), 'heightRelTo': 'ABSOLUTE', 'protect': '0'})
     _hp(tbl, 'pos', {
         'treatAsChar': '1', 'affectLSpacing': '0', 'flowWithText': '1',
         'allowOverlap': '0', 'holdAnchorAndSO': '0',
         'vertRelTo': 'PARA', 'horzRelTo': 'COLUMN',
-        'vertAlign': 'TOP', 'horzAlign': 'LEFT', 'vertOffset': '434', 'horzOffset': '0',
+        'vertAlign': 'TOP', 'horzAlign': 'LEFT',
+        'vertOffset': str(params.vert_offset), 'horzOffset': '0',
     })
-    _hp(tbl, 'outMargin', {'left': '283', 'right': '283', 'top': '283', 'bottom': '283'})
-    _hp(tbl, 'inMargin',  {'left': '510', 'right': '510', 'top': '141', 'bottom': '141'})
+    _hp(tbl, 'outMargin', {'left': om, 'right': om, 'top': om, 'bottom': om})
+    _hp(tbl, 'inMargin',  {'left': m, 'right': m, 'top': mt, 'bottom': mt})
 
     # ── 행 1: 제목 ────────────────────────────────────────────────────
     tr1 = _hp(tbl, 'tr')
     tc1 = _hp(tr1, 'tc', {'name': '', 'header': '0', 'hasMargin': '0',
                            'protect': '0', 'editable': '0', 'dirty': '0',
-                           'borderFillIDRef': '3'})
+                           'borderFillIDRef': bf})
     sl1 = _hp(tc1, 'subList', {
         'id': '', 'textDirection': 'HORIZONTAL', 'lineWrap': 'BREAK',
         'vertAlign': 'CENTER', 'linkListIDRef': '0', 'linkListNextIDRef': '0',
         'textWidth': '0', 'textHeight': '0', 'hasTextRef': '0', 'hasNumRef': '0',
     })
-    p1  = _hp(sl1, 'p', {'id': str(_next_id()), 'paraPrIDRef': '22', 'styleIDRef': '22',
+    p1  = _hp(sl1, 'p', {'id': str(_next_id()),
+                          'paraPrIDRef': params.title_para_pr,
+                          'styleIDRef':  params.title_style_id,
                           'pageBreak': '0', 'columnBreak': '0', 'merged': '0'})
-    r1  = _hp(p1, 'run', {'charPrIDRef': '13'})
+    r1  = _hp(p1, 'run', {'charPrIDRef': params.title_char_pr})
     _hp(r1, 't').text = title
     lsa1 = _hp(p1, 'linesegarray')
-    _hp(lsa1, 'lineseg', {
-        'textpos': '0', 'vertpos': '0', 'vertsize': '1100', 'textheight': '1100',
-        'baseline': '550', 'spacing': '0', 'horzpos': '0', 'horzsize': '50856', 'flags': '393216',
-    })
+    _hp(lsa1, 'lineseg', params.title_lineseg)
     _hp(tc1, 'cellAddr',   {'colAddr': '0', 'rowAddr': '0'})
     _hp(tc1, 'cellSpan',   {'colSpan': '1', 'rowSpan': '1'})
-    _hp(tc1, 'cellSz',     {'width': str(CELL_W), 'height': str(TITLE_ROW_H)})
-    _hp(tc1, 'cellMargin', {'left': '510', 'right': '510', 'top': '141', 'bottom': '141'})
+    _hp(tc1, 'cellSz',     {'width': str(params.cell_w), 'height': str(params.title_row_h)})
+    _hp(tc1, 'cellMargin', {'left': m, 'right': m, 'top': mt, 'bottom': mt})
 
     # ── 행 2: 이미지 ──────────────────────────────────────────────────
     tr2 = _hp(tbl, 'tr')
     tc2 = _hp(tr2, 'tc', {'name': '', 'header': '0', 'hasMargin': '0',
                            'protect': '0', 'editable': '0', 'dirty': '0',
-                           'borderFillIDRef': '3'})
+                           'borderFillIDRef': bf})
     sl2 = _hp(tc2, 'subList', {
         'id': '', 'textDirection': 'HORIZONTAL', 'lineWrap': 'BREAK',
         'vertAlign': 'CENTER', 'linkListIDRef': '0', 'linkListNextIDRef': '0',
         'textWidth': '0', 'textHeight': '0', 'hasTextRef': '0', 'hasNumRef': '0',
     })
 
+    img_horzsize = params.title_lineseg.get('horzsize', '50856')
     if img_rows:
         for row in img_rows:
-            p = _hp(sl2, 'p', {'id': '0', 'paraPrIDRef': '20', 'styleIDRef': '0',
+            p = _hp(sl2, 'p', {'id': '0',
+                                'paraPrIDRef': params.img_para_pr,
+                                'styleIDRef':  params.img_style_id,
                                 'pageBreak': '0', 'columnBreak': '0', 'merged': '0'})
-            run = _hp(p, 'run', {'charPrIDRef': '14'})
+            run = _hp(p, 'run', {'charPrIDRef': params.img_char_pr})
             max_h = 0
             for binary_id, img, disp_w, disp_h in row:
                 run.append(_build_pic(binary_id, img, disp_w, disp_h, z))
@@ -288,21 +418,23 @@ def _build_table(title: str, img_rows: list, z: int) -> tuple:
                 'textpos': '0', 'vertpos': '0',
                 'vertsize': str(max_h), 'textheight': str(max_h),
                 'baseline': str(round(max_h * 0.85)), 'spacing': '600',
-                'horzpos': '0', 'horzsize': '50856', 'flags': '393216',
+                'horzpos': '0', 'horzsize': img_horzsize, 'flags': '393216',
             })
     else:
-        p = _hp(sl2, 'p', {'id': '0', 'paraPrIDRef': '20', 'styleIDRef': '0',
+        p = _hp(sl2, 'p', {'id': '0',
+                            'paraPrIDRef': params.img_para_pr,
+                            'styleIDRef':  params.img_style_id,
                             'pageBreak': '0', 'columnBreak': '0', 'merged': '0'})
-        _hp(p, 'run', {'charPrIDRef': '14'})
+        _hp(p, 'run', {'charPrIDRef': params.img_char_pr})
         lsa = _hp(p, 'linesegarray')
         _hp(lsa, 'lineseg', {'textpos': '0', 'vertpos': '0', 'vertsize': '1000',
                               'textheight': '1000', 'baseline': '850', 'spacing': '600',
-                              'horzpos': '0', 'horzsize': '50856', 'flags': '393216'})
+                              'horzpos': '0', 'horzsize': img_horzsize, 'flags': '393216'})
 
     _hp(tc2, 'cellAddr',   {'colAddr': '0', 'rowAddr': '1'})
     _hp(tc2, 'cellSpan',   {'colSpan': '1', 'rowSpan': '1'})
-    _hp(tc2, 'cellSz',     {'width': str(CELL_W), 'height': str(IMG_CELL_H)})
-    _hp(tc2, 'cellMargin', {'left': '510', 'right': '510', 'top': '141', 'bottom': '141'})
+    _hp(tc2, 'cellSz',     {'width': str(params.cell_w), 'height': str(params.img_cell_h)})
+    _hp(tc2, 'cellMargin', {'left': m, 'right': m, 'top': mt, 'bottom': mt})
 
     return tbl, z
 
@@ -347,6 +479,7 @@ def run(data, t_path: str, o_path: str):
 
     # 4. 기존 증빙 표 단락 제거 (삽입 위치 기억)
     expense_ps = _find_expense_ps(root)
+    params     = _read_template_params(expense_ps)
     insert_idx = list(root).index(expense_ps[0]) if expense_ps else len(list(root))
     for p in expense_ps:
         root.remove(p)
@@ -385,7 +518,7 @@ def run(data, t_path: str, o_path: str):
                 print(f"  [{data_idx + 1}] 유효한 이미지가 없어 이미지 셀 비워둠")
                 layout = None
             else:
-                layout = _layout(imgs, IMG_W_MM, IMG_H_MM)
+                layout = _layout(imgs, params.img_w_mm, params.img_h_mm)
 
             if layout and layout.items:
                 rows_n, cols_n = layout.grid
@@ -420,22 +553,18 @@ def run(data, t_path: str, o_path: str):
         else:
             print(f"  [{data_idx + 1}] 증빙 자료 누락 — 확인 필요")
 
-        tbl_elem, z = _build_table(title, img_rows, z)
+        tbl_elem, z = _build_table(title, img_rows, z, params)
 
         # hp:p > hp:run > hp:tbl 구조로 래핑 (템플릿 패턴과 동일)
         p_wrap = etree.Element(f'{{{HP}}}p', {
-            'id': '0', 'paraPrIDRef': '20', 'styleIDRef': '0',
+            'id': '0', 'paraPrIDRef': params.wrap_para_pr, 'styleIDRef': '0',
             'pageBreak': '0', 'columnBreak': '0', 'merged': '0',
         })
-        run_wrap = etree.SubElement(p_wrap, f'{{{HP}}}run', {'charPrIDRef': '7'})
+        run_wrap = etree.SubElement(p_wrap, f'{{{HP}}}run', {'charPrIDRef': params.wrap_char_pr})
         run_wrap.append(tbl_elem)
         etree.SubElement(run_wrap, f'{{{HP}}}t')
         lsa = etree.SubElement(p_wrap, f'{{{HP}}}linesegarray')
-        etree.SubElement(lsa, f'{{{HP}}}lineseg', {
-            'textpos': '0', 'vertpos': '0', 'vertsize': '1700', 'textheight': '1700',
-            'baseline': '1445', 'spacing': '1020', 'horzpos': '0', 'horzsize': '0',
-            'flags': '393216',
-        })
+        etree.SubElement(lsa, f'{{{HP}}}lineseg', params.wrap_lineseg)
 
         root.insert(insert_idx, p_wrap)
         insert_idx += 1
