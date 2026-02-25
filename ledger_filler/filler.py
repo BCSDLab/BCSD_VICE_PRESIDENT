@@ -209,25 +209,28 @@ def parse_transaction_file(filepath):
         - amount: 입금이면 양수, 출금이면 음수
     """
     wb = openpyxl.load_workbook(filepath)
-    ws = wb.active
-    transactions = []
+    try:
+        ws = wb.active
+        transactions = []
 
-    for row in ws.iter_rows(min_row=2, values_only=True):
-        if len(row) < 6:
-            continue
-        no, date_str, deposit, withdrawal, name, balance = row[:6]
-        if no is None:
-            continue
-        deposit = deposit or 0
-        withdrawal = withdrawal or 0
-        if deposit > 0:
-            amount = deposit
-        elif withdrawal > 0:
-            amount = -withdrawal
-        else:
-            continue
-        date_value = date_str.strftime('%Y.%m.%d') if isinstance(date_str, datetime) else str(date_str)
-        transactions.append((date_value, amount, str(name) if name else "", balance))
+        for row in ws.iter_rows(min_row=2, values_only=True):
+            if len(row) < 6:
+                continue
+            no, date_str, deposit, withdrawal, name, balance = row[:6]
+            if no is None:
+                continue
+            deposit = deposit or 0
+            withdrawal = withdrawal or 0
+            if deposit > 0:
+                amount = deposit
+            elif withdrawal > 0:
+                amount = -withdrawal
+            else:
+                continue
+            date_value = date_str.strftime('%Y.%m.%d') if isinstance(date_str, datetime) else str(date_str)
+            transactions.append((date_value, amount, str(name) if name else "", balance))
+    finally:
+        wb.close()
 
     return transactions
 
@@ -535,6 +538,7 @@ def main():
     tmp_path = None
     upload_ok = False
     preserve_tmp_path = False
+    wb = None
 
     try:
         # 거래내역 파일 결정
@@ -624,6 +628,8 @@ def main():
         print("=" * 60)
 
     finally:
+        if wb is not None:
+            wb.close()
         if tx_tmp_path and os.path.exists(tx_tmp_path):
             os.remove(tx_tmp_path)
         if tmp_path and os.path.exists(tmp_path):
