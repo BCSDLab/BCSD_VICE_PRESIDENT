@@ -145,7 +145,7 @@ python fill_ledger.py --force                      # 이미 기입된 월도 덮
 python fee_check.py [-e <트랙명>] [--send-dm]
 ```
 
-실행 시 `재학생 회비 납부 문서_*.xlsx` 파일 중 가장 최신 날짜 파일을 자동으로 선택합니다.
+실행 시 `.env`의 `FEE_SHEET_URL`에서 납부 문서를 자동으로 다운로드합니다.
 
 **예시 — 파일 생성만:**
 
