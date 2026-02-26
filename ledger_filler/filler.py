@@ -18,13 +18,13 @@ import re
 import sys
 import argparse
 import tempfile
-import zipfile
+from collections import Counter
 from copy import copy
 from datetime import datetime
 from urllib.parse import urlparse, parse_qs
 
 import openpyxl
-from openpyxl.styles import Border, Side
+from openpyxl.styles import Border, Font, Side
 from openpyxl.utils import get_column_letter
 
 try:
@@ -442,7 +442,7 @@ def _apply_row_styles(ws, row_idx, styles):
         cell.protection = copy(style['protection'])
 
 
-def fill_month(ws, month, transactions, force=False):
+def fill_month(ws, month, transactions, force=False, receipt_map=None):
     """
     해당 월의 거래내역을 관리 문서 시트에 기입.
 
@@ -518,6 +518,17 @@ def fill_month(ws, month, transactions, force=False):
         ws.cell(row=row_idx, column=COL_AMOUNT).value = amount
         ws.cell(row=row_idx, column=COL_BALANCE).value = balance
 
+        # E열: 출금이고 영수증 매칭 결과가 있으면 하이퍼링크 기입
+        if amount < 0 and receipt_map:
+            key = (date_str, int(abs(amount)))
+            if key in receipt_map:
+                title, url = receipt_map[key]
+                cell = ws.cell(row=row_idx, column=COL_DESC)
+                cell.value = title
+                cell.hyperlink = url
+                # E6 하이퍼링크 셀 스타일과 동일하게 적용
+                cell.font = Font(underline='single', color='0000FF')
+
     # 내부 행 상단 테두리 복원: header_row만 top=medium, 나머지는 top=None
     # (이전 실행에서 잘못 적용된 medium border가 남아 있는 경우도 교정)
     _no_top = Side(border_style=None)
@@ -576,6 +587,193 @@ def update_total_formula(ws):
     ws.cell(row=total_row, column=COL_BALANCE).value = f'={_L_DESC}{total_row}-{_L_NOTE}{total_row}'
 
     print(f"[INFO] 합계 행({total_row}) 수식 갱신 완료")
+
+
+# ============================================================================
+# Receipt matching (Google Drive)
+# ============================================================================
+
+def _find_drive_subfolder(drive, parent_id, name):
+    """Drive 폴더 내 이름이 일치하는 하위 폴더 ID 반환. 없으면 None."""
+    result = drive.files().list(
+        q=(
+            f"'{parent_id}' in parents"
+            f" and name='{name}'"
+            " and mimeType='application/vnd.google-apps.folder'"
+            " and trashed=false"
+        ),
+        fields='files(id)',
+        supportsAllDrives=True,
+        includeItemsFromAllDrives=True,
+    ).execute()
+    files = result.get('files', [])
+    return files[0]['id'] if files else None
+
+
+def _list_receipt_candidates(drive, root_folder_id, date_str):
+    """
+    date_str(yyyy.mm.dd)로 시작하는 영수증 파일 목록 반환.
+
+    폴더 구조를 두 가지 방식으로 탐색:
+    1. root/{yyyy}/{mm} — 이름에 슬래시가 포함된 단일 폴더 (예: "2026/02")
+    2. root/{yyyy}/{mm}/ — 중첩 폴더
+
+    Returns list of {id, name, mimeType, webViewLink}.
+    """
+    parts = date_str.split('.')
+    if len(parts) < 3:
+        return []
+    year, month = parts[0], parts[1]
+
+    # 방식 1: "yyyy/mm" 이름의 단일 폴더
+    month_id = _find_drive_subfolder(drive, root_folder_id, f"{year}/{month}")
+
+    # 방식 2: 중첩 폴더 (year 폴더 → month 폴더)
+    if not month_id:
+        year_id = _find_drive_subfolder(drive, root_folder_id, year)
+        if year_id:
+            month_id = _find_drive_subfolder(drive, year_id, month)
+            if not month_id:
+                month_id = _find_drive_subfolder(drive, year_id, str(int(month)))
+
+    if not month_id:
+        return []
+
+    # 월 폴더 내 전체 파일을 받아 클라이언트 사이드에서 날짜 접두사 필터
+    # (Drive API의 name contains 는 점(.)을 구분자로 처리하여 오매칭 발생)
+    all_files = []
+    page_token = None
+    while True:
+        kwargs = dict(
+            q=f"'{month_id}' in parents and trashed=false",
+            fields='nextPageToken, files(id, name, mimeType, webViewLink)',
+            supportsAllDrives=True,
+            includeItemsFromAllDrives=True,
+        )
+        if page_token:
+            kwargs['pageToken'] = page_token
+        result = drive.files().list(**kwargs).execute()
+        all_files.extend(result.get('files', []))
+        page_token = result.get('nextPageToken')
+        if not page_token:
+            break
+
+    return sorted(
+        (f for f in all_files if f['name'].startswith(date_str)),
+        key=lambda f: f['name'],
+    )
+
+
+def _export_drive_file_as_text(drive, file_id):
+    """
+    Google Drive 파일을 텍스트로 내보내기.
+
+    text/plain → 실패 시 text/html(태그 제거) 순으로 시도.
+    모두 실패하면 None 반환.
+    """
+    from googleapiclient.http import MediaIoBaseDownload
+
+    for mime in ('text/plain', 'text/html'):
+        buf = io.BytesIO()
+        try:
+            downloader = MediaIoBaseDownload(
+                buf,
+                drive.files().export_media(fileId=file_id, mimeType=mime),
+            )
+            done = False
+            while not done:
+                _, done = downloader.next_chunk()
+        except Exception:
+            continue
+
+        text = buf.getvalue().decode('utf-8', errors='ignore')
+        if mime == 'text/html':
+            text = re.sub(r'<[^>]+>', '', text)
+        return text
+
+    return None
+
+
+def _extract_amounts_from_drive_file(drive, file_id):
+    """
+    Google Drive 파일(Google Docs 등)을 텍스트로 내보내 포함된 정수 집합 반환.
+
+    Returns set of int.
+    """
+    text = _export_drive_file_as_text(drive, file_id)
+    if text is None:
+        print(f"[WARNING] 파일 텍스트 내보내기 실패 (file_id={file_id}), 건너뜁니다.")
+        return set()
+
+    amounts = set()
+    for m in re.finditer(r'([\d,]+)원', text):
+        raw = m.group(1).replace(',', '')
+        if raw:
+            try:
+                amounts.add(int(raw))
+            except ValueError:
+                pass
+    return amounts
+
+
+def _normalize_receipt_title(title):
+    """영수증 파일 제목 정규화."""
+    # 비기너 환급이 포함된 경우 → 비기너 환급
+    if '비기너 환급' in title:
+        return '비기너 환급'
+    # "의 사본" 제거
+    title = re.sub(r'의 사본\s*$', '', title).strip()
+    # 이름 패턴 제거: 한글이름(트랙)님 또는 한글이름님
+    title = re.sub(r'[가-힣]{2,5}(?:\s*\([A-Za-z]+\))?님\s*', '', title).strip()
+    return title
+
+
+def build_receipt_map(folder_url, transactions):
+    """
+    출금 거래 목록에 대해 영수증 파일 매칭 맵 생성.
+
+    1차: 날짜(파일명 접두사 yyyy.mm.dd) 매칭
+    2차: 파일 텍스트에 거래 금액(절댓값) 포함 여부 확인
+
+    Returns:
+        dict mapping (date_str, abs_amount_int) → (title, url)
+        - title: 파일명에서 날짜 접두사와 확장자를 제거한 문자열
+        - url:   Google Drive webViewLink
+    """
+    folder_id = _extract_drive_folder_id(folder_url)
+    if not folder_id:
+        raise ValueError(f"영수증 Drive 폴더 URL에서 ID를 파싱할 수 없습니다: {folder_url}")
+
+    drive = _get_drive_service()
+    receipt_map = {}
+
+    # 동일 날짜·금액 출금이 2건 이상인 키는 어느 영수증인지 특정 불가 → 제외
+    tx_counts = Counter(
+        (date_str, int(abs(amount)))
+        for date_str, amount, *_ in transactions
+        if amount < 0
+    )
+    ambiguous = {key for key, cnt in tx_counts.items() if cnt > 1}
+
+    withdrawal_dates = {date_str for date_str, *_ in tx_counts}
+
+    for date_str in sorted(withdrawal_dates):
+        candidates = _list_receipt_candidates(drive, folder_id, date_str)
+        for f in candidates:
+            amounts = _extract_amounts_from_drive_file(drive, f['id'])
+            title = _normalize_receipt_title(f['name'][len(date_str):].strip())
+            for amt in amounts:
+                key = (date_str, amt)
+                if key not in ambiguous and key not in receipt_map:
+                    receipt_map[key] = (title, f['webViewLink'])
+            # 이체 수수료 500원이 별도 기재된 경우: main + 500 키도 등록
+            if 500 in amounts:
+                for amt in amounts - {500}:
+                    fee_key = (date_str, amt + 500)
+                    if fee_key not in ambiguous and fee_key not in receipt_map:
+                        receipt_map[fee_key] = (title, f['webViewLink'])
+
+    return receipt_map
 
 
 # ============================================================================
@@ -682,9 +880,20 @@ def main():
             sys.exit(1)
         ws = wb[sheet_name]
 
+        # 영수증 매칭
+        receipt_map = {}
+        receipt_drive_url = os.getenv('RECEIPT_DIR')
+        if receipt_drive_url:
+            print("\n[INFO] 영수증 Drive 폴더에서 매칭 중...")
+            try:
+                receipt_map = build_receipt_map(receipt_drive_url, transactions)
+                print(f"[INFO] 영수증 매칭 완료: {len(receipt_map)}건")
+            except Exception as e:
+                print(f"[WARNING] 영수증 매칭 실패 (건너뜀): {e}")
+
         # 데이터 기입
         print()
-        success = fill_month(ws, month, transactions, force=args.force)
+        success = fill_month(ws, month, transactions, force=args.force, receipt_map=receipt_map)
         if success is False:
             sys.exit(1)
         if success is None:
@@ -715,7 +924,10 @@ def main():
             sys.exit(1)
 
         print("[INFO] 아래 항목은 수동으로 기입해주세요:")
-        print("       - E열 (내용): 회비 / 서버비 / 회식비 등")
+        if not receipt_drive_url:
+            print("       - E열 (내용): 회비 / 서버비 / 회식비 등")
+        else:
+            print("       - E열 (내용): 영수증 미매칭 출금 항목")
         print("       - G열 (비고): 납부 월 등")
         print("=" * 60)
 
