@@ -51,6 +51,17 @@ MONTH_COLUMNS = {
     12: 16,  # Q
 }
 
+# 회비 금액
+MONTHLY_FEE = 10_000   # ~2026년 2월: 월 10,000원
+SEMESTER_FEE = 60_000  # 2026년 3월~: 학기당 60,000원
+
+# 2026년 학기 정의: (시작 월, 종료 월)
+# 실제 2학기는 9월~이듬해 2월이나, 2026 시트 내 구간(9~12월)만 처리
+SEMESTERS_2026 = [
+    (3, 8),   # 1학기
+    (9, 12),  # 2학기 (2026 시트 내 구간)
+]
+
 
 # ============================================================================
 # Helper Functions
@@ -134,33 +145,89 @@ def should_exclude_row(row_data):
     return False
 
 
-def calculate_unpaid_months(row_data, sheet_name, current_month):
+def calculate_unpaid_detail(row_data, sheet_name, current_month):
     """
-    미납 월 수 계산
+    미납 상세 계산
+
+    - 2025년 전체 / 2026년 1~2월: 월 10,000원
+    - 2026년 3월~: 학기당 60,000원 (SEMESTERS_2026 참고)
 
     Args:
+        row_data: parse_sheet() 반환 행 데이터
         sheet_name: "2025" 또는 "2026"
         current_month: 현재 월 (1~12)
 
     Returns:
-        int: 미납 월 수
+        dict:
+            monthly_amount   (int)       — 월별 미납 금액 합계
+            unpaid_semesters (list[str]) — 미납 학기 식별자 목록 (예: ['26-1', '26-2'])
     """
     months = row_data["months"]
 
     if sheet_name == "2025":
-        check_until = 12
-    elif sheet_name == "2026":
+        unpaid = sum(1 for m in range(1, 13) if months.get(m) is None)
+        return {"monthly_amount": unpaid * MONTHLY_FEE, "unpaid_semesters": []}
+
+    if sheet_name == "2026":
         check_until = max(0, current_month - 1)
-    else:
-        check_until = 12
+        monthly_amount = 0
+        unpaid_semesters = []
 
-    unpaid_count = 0
-    for month_num in range(1, check_until + 1):
-        val = months.get(month_num)
-        if val is None:
-            unpaid_count += 1
+        # 1~2월: 월별 10,000원
+        for m in range(1, min(2, check_until) + 1):
+            if months.get(m) is None:
+                monthly_amount += MONTHLY_FEE
 
-    return unpaid_count
+        # 학기별: 체크 대상 구간 내 미납 월이 하나라도 있으면 학기비 전액 청구
+        year_short = int(sheet_name) % 100
+        for i, (sem_start, sem_end) in enumerate(SEMESTERS_2026, 1):
+            checked = [m for m in range(sem_start, sem_end + 1) if m <= check_until]
+            if checked and any(months.get(m) is None for m in checked):
+                unpaid_semesters.append(f"{year_short}-{i}")
+
+        return {"monthly_amount": monthly_amount, "unpaid_semesters": unpaid_semesters}
+
+    # 기타 시트
+    unpaid = sum(1 for m in range(1, 13) if months.get(m) is None)
+    return {"monthly_amount": unpaid * MONTHLY_FEE, "unpaid_semesters": []}
+
+
+def _format_unpaid_detail(name, data, date_year, date_month, date_day):
+    """
+    미납 내역 문구 생성 (3가지 케이스)
+
+    Case 1 — 월별 회비만 미납:
+        "{이름} 님의 회비가 {금액}원 미납되었습니다."
+    Case 2 — 학기 회비만 미납:
+        "{이름} 님의 26-1학기 회비가 미납되었습니다."
+    Case 3 — 월별 + 학기 혼재:
+        "{이름} 님의 회비가 총 {금액}원 미납되었습니다.
+          - 이전 회비: {월별금액}원
+          - 26-1학기 회비: 60,000원"
+    """
+    monthly_amount = data["monthly_amount"]
+    unpaid_semesters = data["unpaid_semesters"]
+    prefix = f"확인 결과, {date_year}년 {date_month}월 {date_day}일 기준으로 {name} 님의"
+
+    has_monthly = monthly_amount > 0
+    has_semester = bool(unpaid_semesters)
+
+    if has_monthly and not has_semester:
+        return f"{prefix} 회비가 {monthly_amount:,}원 미납되었습니다."
+
+    if not has_monthly and has_semester:
+        sem_str = ", ".join(f"{s}학기" for s in unpaid_semesters)
+        return f"{prefix} {sem_str} 회비가 미납되었습니다."
+
+    if has_monthly and has_semester:
+        total = data["unpaid_amount"]
+        lines = [f"{prefix} 회비가 총 {total:,}원 미납되었습니다."]
+        lines.append(f"  - 이전 회비: {monthly_amount:,}원")
+        for s in unpaid_semesters:
+            lines.append(f"  - {s}학기 회비: {SEMESTER_FEE:,}원")
+        return "\n".join(lines) + "\n"
+
+    return f"{prefix} 회비가 미납되었습니다."
 
 
 def _validate_identifier(value):
@@ -379,13 +446,21 @@ def aggregate_unpaid_fees(wb, current_month, excluded_tracks=None):
 
             included_count += 1
 
-            unpaid_months = calculate_unpaid_months(row_data, sheet_name, current_month)
-            unpaid_amount = unpaid_months * 10000
+            detail = calculate_unpaid_detail(row_data, sheet_name, current_month)
+            unpaid_amount = detail["monthly_amount"] + len(detail["unpaid_semesters"]) * SEMESTER_FEE
 
             if key not in aggregated:
-                aggregated[key] = {"name": name, "track": track, "unpaid_amount": 0}
+                aggregated[key] = {
+                    "name": name,
+                    "track": track,
+                    "unpaid_amount": 0,
+                    "monthly_amount": 0,
+                    "unpaid_semesters": [],
+                }
 
             aggregated[key]["unpaid_amount"] += unpaid_amount
+            aggregated[key]["monthly_amount"] += detail["monthly_amount"]
+            aggregated[key]["unpaid_semesters"].extend(detail["unpaid_semesters"])
 
         print(f"[INFO] 시트 '{sheet_name}': 포함 {included_count}명, 제외 {excluded_count}명")
 
@@ -468,18 +543,13 @@ def generate_message_files(unpaid_data, output_dir, template_path):
         print("[WARNING] FEE_SHEET_URL 환경 변수가 설정되지 않았습니다. 납부문서 링크가 비어 있습니다.")
 
     for (name, track), data in unpaid_data.items():
-        unpaid_amount = data["unpaid_amount"]
-        formatted_amount = format_amount(unpaid_amount)
+        unpaid_detail = _format_unpaid_detail(name, data, last_day.year, last_day.month, last_day.day)
 
         message = template_content.replace("{발신자}", sender_name)
         message = message.replace("{전화번호}", sender_phone)
         message = message.replace("{멘션}", f"@{sender_name}" if sender_name else "{멘션}")
-        message = message.replace("{이름}", name)
-        message = message.replace("{금액}", formatted_amount)
+        message = message.replace("{미납내역}", unpaid_detail)
         message = message.replace("{납부문서URL}", fee_sheet_url)
-        message = message.replace("{year}", str(last_day.year))
-        message = message.replace("{month}", str(last_day.month))
-        message = message.replace("{day}", str(last_day.day))
 
         filename = generate_unique_filename(name, track, used_filenames)
         filepath = os.path.join(output_dir, filename)
@@ -488,7 +558,7 @@ def generate_message_files(unpaid_data, output_dir, template_path):
             f.write(message)
 
         files_generated += 1
-        total_unpaid_amount += unpaid_amount
+        total_unpaid_amount += data["unpaid_amount"]
 
     return files_generated, total_unpaid_amount
 
@@ -545,16 +615,12 @@ def send_slack_dms(unpaid_data, template_path):
             failed += 1
             continue
 
-        formatted_amount = format_amount(data["unpaid_amount"])
+        unpaid_detail = _format_unpaid_detail(name, data, last_day.year, last_day.month, last_day.day)
         message = template_content.replace("{발신자}", sender_name)
         message = message.replace("{전화번호}", sender_phone)
-        message = message.replace("{이름}", name)
         message = message.replace("{멘션}", f"<@{sender_id}>")
-        message = message.replace("{금액}", formatted_amount)
+        message = message.replace("{미납내역}", unpaid_detail)
         message = message.replace("{납부문서URL}", fee_sheet_url)
-        message = message.replace("{year}", str(last_day.year))
-        message = message.replace("{month}", str(last_day.month))
-        message = message.replace("{day}", str(last_day.day))
 
         try:
             dm_resp = client.conversations_open(users=[user_id])
