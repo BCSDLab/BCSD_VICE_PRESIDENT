@@ -18,7 +18,6 @@ import re
 import sys
 import argparse
 import tempfile
-import zipfile
 from collections import Counter
 from copy import copy
 from datetime import datetime
