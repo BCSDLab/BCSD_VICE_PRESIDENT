@@ -79,6 +79,7 @@ python main.py 2025-11 2026-02
 | `GOOGLE_OAUTH_CLIENT_JSON` | OAuth 데스크톱 앱 클라이언트 시크릿 JSON 경로 |
 | `TRANSACTION_DRIVE_URL` | 신한 거래내역 파일들이 있는 Google Drive 폴더 링크 |
 | `MANAGEMENT_SHEET_URL` | 재학생 회비 관리 문서 Google Sheets URL |
+| `RECEIPT_DIR` | 영수증 Google Drive 폴더 URL (선택) — `{년}/{월}/` 하위 폴더 구조 |
 
 > 최초 실행 시 브라우저 인증이 열립니다. 이후 `.google_token.json`에 토큰이 캐시되어 재인증 없이 사용 가능합니다.
 
