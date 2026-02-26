@@ -386,7 +386,7 @@ def fetch_slack_id_map():
             }
 
 
-def aggregate_unpaid_fees(wb, current_month, excluded_tracks=None):
+def aggregate_unpaid_fees(wb, current_month, excluded_tracks=None, excluded_persons=None):
     """
     2025/2026 시트 데이터 통합 및 미납 금액 계산
 
@@ -398,6 +398,10 @@ def aggregate_unpaid_fees(wb, current_month, excluded_tracks=None):
         excluded_tracks = set()
     else:
         excluded_tracks = set(excluded_tracks)
+    if excluded_persons is None:
+        excluded_persons = set()
+    else:
+        excluded_persons = set(excluded_persons)
 
     aggregated = {}
     excluded_keys = set()
@@ -435,6 +439,11 @@ def aggregate_unpaid_fees(wb, current_month, excluded_tracks=None):
                 continue
 
             if _normalize_track(track) in excluded_tracks:
+                excluded_keys.add(key)
+                excluded_count += 1
+                continue
+
+            if (name, _normalize_track(track)) in excluded_persons:
                 excluded_keys.add(key)
                 excluded_count += 1
                 continue
@@ -648,6 +657,21 @@ def parse_excluded_tracks(exclude_args):
     return excluded_tracks
 
 
+def parse_excluded_persons(exclude_args):
+    """CLI 인자에서 제외할 개인 파싱 (이름_트랙 형식, 트랙 영소문자 정규화)"""
+    excluded_persons = set()
+    if exclude_args:
+        for arg in exclude_args:
+            for entry in arg.split(","):
+                entry = entry.strip()
+                if "_" not in entry:
+                    print(f"[WARNING] 개인 제외 형식 오류 (이름_트랙 필요): '{entry}'")
+                    continue
+                name, track = entry.split("_", 1)
+                excluded_persons.add((name.strip(), _normalize_track(track)))
+    return excluded_persons
+
+
 def main():
     parser = argparse.ArgumentParser(description="BCSD 회비 납부 검증 및 미납 메시지 생성 프로그램")
     parser.add_argument(
@@ -656,6 +680,13 @@ def main():
         action="append",
         dest="exclude_tracks",
         help="제외할 트랙명 (반복 사용 가능, 쉼표로 구분 가능)",
+    )
+    parser.add_argument(
+        "-p",
+        "--exclude-person",
+        action="append",
+        dest="exclude_persons",
+        help="제외할 개인 — 이름_트랙 형식 (반복 사용 가능, 쉼표로 구분 가능)",
     )
     parser.add_argument(
         "--send-dm",
@@ -670,6 +701,7 @@ def main():
     args = parser.parse_args()
 
     excluded_tracks = parse_excluded_tracks(args.exclude_tracks)
+    excluded_persons = parse_excluded_persons(args.exclude_persons)
 
     print("=" * 70)
     print("BCSD 회비 납부 검증 및 미납 메시지 생성 프로그램")
@@ -680,6 +712,8 @@ def main():
 
     if excluded_tracks:
         print(f"[INFO] 제외할 트랙: {', '.join(sorted(excluded_tracks))}")
+    if excluded_persons:
+        print(f"[INFO] 제외할 개인: {', '.join(f'{n}_{t}' for n, t in sorted(excluded_persons))}")
 
     fee_sheet_url = os.getenv("FEE_SHEET_URL")
     if not fee_sheet_url:
@@ -710,7 +744,7 @@ def main():
     print(f"[INFO] 현재 월: {current_month}")
     print(f"[INFO] 처리 대상 시트: {SHEETS_TO_PROCESS}")
 
-    unpaid_data = aggregate_unpaid_fees(wb, current_month, excluded_tracks)
+    unpaid_data = aggregate_unpaid_fees(wb, current_month, excluded_tracks, excluded_persons)
 
     print("\n" + "=" * 70)
     print("미납 데이터 요약")

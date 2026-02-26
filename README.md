@@ -150,7 +150,7 @@ python fill_ledger.py --force                      # 이미 기입된 월도 덮
 ### 사용법
 
 ```bash
-python fee_check.py [-e <트랙명>] [--send-dm]
+python fee_check.py [-e <트랙명>] [-p <이름_트랙>] [--send-dm]
 ```
 
 실행 시 `.env`의 `FEE_SHEET_URL`에서 납부 문서를 자동으로 다운로드합니다.
@@ -166,6 +166,14 @@ python fee_check.py
 ```bash
 python fee_check.py -e "Back-End" -e "Android"
 python fee_check.py -e "Back-End,Android,Design"
+```
+
+**예시 — 특정 인원 제외:**
+
+```bash
+python fee_check.py -p "홍길동_Android"
+python fee_check.py -p "홍길동_Android" -p "김철수_Back-End"
+python fee_check.py -p "홍길동_Android,김철수_Back-End"
 ```
 
 **예시 — 파일 생성 + Slack DM 발송:**
