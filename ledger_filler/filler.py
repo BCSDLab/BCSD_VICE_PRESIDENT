@@ -249,7 +249,7 @@ def parse_transaction_file(filepath):
         list of (date_str, amount, name, balance)
         - amount: 입금이면 양수, 출금이면 음수
     """
-    wb = openpyxl.load_workbook(filepath, read_only=True, data_only=True)
+    wb = openpyxl.load_workbook(filepath, data_only=True)
     try:
         ws = wb.active
         transactions = []
@@ -279,7 +279,10 @@ def parse_transaction_file(filepath):
                 amount = -withdrawal
             else:
                 continue
-            date_value = date_str.strftime('%Y.%m.%d') if isinstance(date_str, datetime) else str(date_str)
+            if isinstance(date_str, datetime):
+                date_value = date_str.strftime('%Y.%m.%d')
+            else:
+                date_value = str(date_str).split()[0]
             if isinstance(balance, (int, float)):
                 safe_balance = balance
             elif isinstance(balance, str):
