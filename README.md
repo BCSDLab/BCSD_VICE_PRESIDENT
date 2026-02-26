@@ -37,21 +37,13 @@ cp .env.example .env
 ### 사용법
 
 ```bash
-python main.py [파일경로] <시작기간> <종료기간>
+python main.py <시작기간> <종료기간>
 ```
 
-파일 경로를 생략하면 `.env`의 `MANAGEMENT_SHEET_URL`에서 자동으로 다운로드합니다.
-
-**예시 — MANAGEMENT_SHEET_URL 자동 다운로드:**
+**예시 — 2025년 11월 ~ 2026년 2월 장부 생성:**
 
 ```bash
 python main.py 2025-11 2026-02
-```
-
-**예시 — 로컬 파일 직접 지정:**
-
-```bash
-python main.py "재학생 회비 관리 문서_20260225.xlsx" 2025-11 2026-02
 ```
 
 ### 출력 결과

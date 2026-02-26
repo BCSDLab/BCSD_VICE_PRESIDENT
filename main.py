@@ -10,10 +10,14 @@ OUTPUT_DIR = 'output'
 IMAGE_DIR  = 'receipt_images'
 def main():
     parser = argparse.ArgumentParser(description='BCSD 부회장 회계 자동화')
-    parser.add_argument('source', nargs='?', help='재학생 회비 관리 문서 파일 경로 (생략 시 MANAGEMENT_SHEET_URL 사용)')
-    parser.add_argument('start',  help='시작 기간 (예: 2025-11)')
-    parser.add_argument('end',    help='종료 기간 (예: 2026-02)')
+    parser.add_argument('start', help='시작 기간 (예: 2025-11)')
+    parser.add_argument('end',   help='종료 기간 (예: 2026-02)')
     args = parser.parse_args()
+
+    sheet_url = os.getenv('MANAGEMENT_SHEET_URL')
+    if not sheet_url:
+        print("[ERROR] MANAGEMENT_SHEET_URL 환경변수가 설정되지 않았습니다.", file=sys.stderr)
+        sys.exit(1)
 
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
@@ -29,25 +33,16 @@ def main():
     hwp_ext       = os.path.splitext(hwp_template)[1]
     hwp_output    = os.path.join(OUTPUT_DIR, f'BCSD_{period}_증빙자료{hwp_ext}')
 
-    tmp_path = None
-    if args.source:
-        source_path = args.source
-    else:
-        sheet_url = os.getenv('MANAGEMENT_SHEET_URL')
-        if not sheet_url:
-            print("[ERROR] source 인자 또는 MANAGEMENT_SHEET_URL 환경변수가 필요합니다.", file=sys.stderr)
-            sys.exit(1)
-        from ledger_filler.filler import download_sheet_as_xlsx
-        print(f"[INFO] 관리 문서 다운로드 중... ({sheet_url})")
-        _, tmp_path = download_sheet_as_xlsx(sheet_url)
-        source_path = tmp_path
-        print(f"[INFO] 다운로드 완료 → {tmp_path}")
+    from ledger_filler.filler import download_sheet_as_xlsx
+    print(f"[INFO] 관리 문서 다운로드 중... ({sheet_url})")
+    _, tmp_path = download_sheet_as_xlsx(sheet_url)
+    print(f"[INFO] 다운로드 완료 → {tmp_path}")
 
     try:
-        print(f"[1/3] 장부 파싱 중... ({source_path})")
-        df = mfp.run(source_path, args.start, args.end, output_path=ledger_output)
+        print(f"[1/3] 장부 파싱 중...")
+        df = mfp.run(tmp_path, args.start, args.end, output_path=ledger_output)
     finally:
-        if tmp_path and os.path.exists(tmp_path):
+        if os.path.exists(tmp_path):
             os.unlink(tmp_path)
 
     if df is None:
