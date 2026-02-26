@@ -747,11 +747,16 @@ def build_receipt_map(folder_url, transactions):
     drive = _get_drive_service()
     receipt_map = {}
 
-    withdrawal_dates = {
-        date_str
+    # 동일 날짜·금액 출금이 2건 이상인 키는 어느 영수증인지 특정 불가 → 제외
+    from collections import Counter
+    tx_counts = Counter(
+        (date_str, int(abs(amount)))
         for date_str, amount, *_ in transactions
         if amount < 0
-    }
+    )
+    ambiguous = {key for key, cnt in tx_counts.items() if cnt > 1}
+
+    withdrawal_dates = {date_str for date_str, *_ in tx_counts}
 
     for date_str in sorted(withdrawal_dates):
         candidates = _list_receipt_candidates(drive, folder_id, date_str)
@@ -760,13 +765,13 @@ def build_receipt_map(folder_url, transactions):
             title = _normalize_receipt_title(f['name'][len(date_str):].strip())
             for amt in amounts:
                 key = (date_str, amt)
-                if key not in receipt_map:
+                if key not in ambiguous and key not in receipt_map:
                     receipt_map[key] = (title, f['webViewLink'])
             # 이체 수수료 500원이 별도 기재된 경우: main + 500 키도 등록
             if 500 in amounts:
                 for amt in amounts - {500}:
                     fee_key = (date_str, amt + 500)
-                    if fee_key not in receipt_map:
+                    if fee_key not in ambiguous and fee_key not in receipt_map:
                         receipt_map[fee_key] = (title, f['webViewLink'])
 
     return receipt_map
