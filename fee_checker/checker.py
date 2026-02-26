@@ -7,7 +7,6 @@ BCSD 회비 납부 검증 및 미납 메시지 생성 프로그램
 import os
 import sys
 import re
-import glob
 import argparse
 from contextlib import contextmanager
 from datetime import datetime, timedelta
@@ -20,8 +19,6 @@ import openpyxl
 # Constants
 # ============================================================================
 
-EXCEL_FILE_PATTERN = "재학생 회비 납부 문서_*.xlsx"
-EXCEL_FILE_PREFIX = "재학생 회비 납부 문서_"
 TEMPLATE_FILE = "templates/fee_notice.md"
 OUTPUT_BASE_DIR = "output"
 
@@ -59,40 +56,6 @@ MONTH_COLUMNS = {
 # Helper Functions
 # ============================================================================
 
-
-def find_latest_excel_file():
-    """
-    최신 날짜 접미사를 가진 엑셀 파일 찾기
-
-    패턴: "재학생 회비 납부 문서_YYYYMMDD.xlsx"
-
-    Returns:
-        str: 최신 파일명, 또는 None (파일 없음)
-    """
-    matching_files = glob.glob(EXCEL_FILE_PATTERN)
-
-    if not matching_files:
-        return None
-
-    date_pattern = re.compile(r"_(\d{8})\.xlsx$")
-    files_with_dates = []
-
-    for filepath in matching_files:
-        filename = os.path.basename(filepath)
-        match = date_pattern.search(filename)
-        if match:
-            date_str = match.group(1)
-            try:
-                date_obj = datetime.strptime(date_str, "%Y%m%d")
-                files_with_dates.append((date_obj, filename))
-            except ValueError:
-                continue
-
-    if not files_with_dates:
-        return None
-
-    files_with_dates.sort(key=lambda x: x[0], reverse=True)
-    return files_with_dates[0][1]
 
 
 def parse_sheet(ws, sheet_name):
@@ -652,23 +615,30 @@ def main():
     if excluded_tracks:
         print(f"[INFO] 제외할 트랙: {', '.join(sorted(excluded_tracks))}")
 
-    excel_file = find_latest_excel_file()
-    if not excel_file:
-        print(f"[ERROR] 엑셀 파일을 찾을 수 없습니다 (패턴: {EXCEL_FILE_PATTERN})")
+    fee_sheet_url = os.getenv("FEE_SHEET_URL")
+    if not fee_sheet_url:
+        print("[ERROR] FEE_SHEET_URL 환경변수가 설정되지 않았습니다.", file=sys.stderr)
         sys.exit(1)
 
     if not os.path.exists(TEMPLATE_FILE):
         print(f"[ERROR] 템플릿 파일을 찾을 수 없습니다 ({TEMPLATE_FILE})")
         sys.exit(1)
 
-    print(f"[INFO] 선택된 엑셀 파일: {excel_file}")
+    from ledger_filler.filler import download_sheet_as_xlsx
+    print(f"[INFO] 납부 문서 다운로드 중... ({fee_sheet_url})")
+    _, tmp_path = download_sheet_as_xlsx(fee_sheet_url)
+    print(f"[INFO] 다운로드 완료 → {tmp_path}")
     print(f"[INFO] 선택된 템플릿 파일: {TEMPLATE_FILE}")
 
     print("\n" + "=" * 70)
     print("엑셀 파싱 및 미납 계산")
     print("=" * 70)
 
-    wb = openpyxl.load_workbook(excel_file, data_only=False)
+    try:
+        wb = openpyxl.load_workbook(tmp_path, data_only=False)
+    finally:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
     current_month = datetime.now().month
 
     print(f"[INFO] 현재 월: {current_month}")
