@@ -19,6 +19,7 @@ import sys
 import argparse
 import tempfile
 import zipfile
+from collections import Counter
 from copy import copy
 from datetime import datetime
 from urllib.parse import urlparse, parse_qs
@@ -599,8 +600,8 @@ def _find_drive_subfolder(drive, parent_id, name):
         q=(
             f"'{parent_id}' in parents"
             f" and name='{name}'"
-            f" and mimeType='application/vnd.google-apps.folder'"
-            f" and trashed=false"
+            " and mimeType='application/vnd.google-apps.folder'"
+            " and trashed=false"
         ),
         fields='files(id)',
         supportsAllDrives=True,
@@ -615,8 +616,8 @@ def _list_receipt_candidates(drive, root_folder_id, date_str):
     date_str(yyyy.mm.dd)로 시작하는 영수증 파일 목록 반환.
 
     폴더 구조를 두 가지 방식으로 탐색:
-    1. root/{yyyy}/{mm}/ — 중첩 폴더
-    2. root/{yyyy}/{mm} — 이름에 슬래시가 포함된 단일 폴더 (예: "2026/02")
+    1. root/{yyyy}/{mm} — 이름에 슬래시가 포함된 단일 폴더 (예: "2026/02")
+    2. root/{yyyy}/{mm}/ — 중첩 폴더
 
     Returns list of {id, name, mimeType, webViewLink}.
     """
@@ -724,7 +725,7 @@ def _normalize_receipt_title(title):
     # "의 사본" 제거
     title = re.sub(r'의 사본\s*$', '', title).strip()
     # 이름 패턴 제거: 한글이름(트랙)님 또는 한글이름님
-    title = re.sub(r'[가-힣]{2,5}(?:\([A-Za-z]+\))?님\s*', '', title).strip()
+    title = re.sub(r'[가-힣]{2,5}(?:\s*\([A-Za-z]+\))?님\s*', '', title).strip()
     return title
 
 
@@ -748,7 +749,6 @@ def build_receipt_map(folder_url, transactions):
     receipt_map = {}
 
     # 동일 날짜·금액 출금이 2건 이상인 키는 어느 영수증인지 특정 불가 → 제외
-    from collections import Counter
     tx_counts = Counter(
         (date_str, int(abs(amount)))
         for date_str, amount, *_ in transactions
