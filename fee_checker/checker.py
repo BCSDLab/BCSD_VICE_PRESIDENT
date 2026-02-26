@@ -434,7 +434,7 @@ def aggregate_unpaid_fees(wb, current_month, excluded_tracks=None):
                 excluded_count += 1
                 continue
 
-            if track in excluded_tracks:
+            if _normalize_track(track) in excluded_tracks:
                 excluded_keys.add(key)
                 excluded_count += 1
                 continue
@@ -639,11 +639,11 @@ def send_slack_dms(unpaid_data, template_path):
 
 
 def parse_excluded_tracks(exclude_args):
-    """CLI 인자에서 제외할 트랙 파싱"""
+    """CLI 인자에서 제외할 트랙 파싱 (영소문자 정규화)"""
     excluded_tracks = set()
     if exclude_args:
         for arg in exclude_args:
-            tracks = [t.strip() for t in arg.split(",")]
+            tracks = [_normalize_track(t.strip()) for t in arg.split(",")]
             excluded_tracks.update(tracks)
     return excluded_tracks
 
