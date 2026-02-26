@@ -68,7 +68,6 @@ SEMESTERS_2026 = [
 # ============================================================================
 
 
-
 def parse_sheet(ws, sheet_name):
     """
     시트에서 데이터 행 파싱
@@ -392,7 +391,8 @@ def aggregate_unpaid_fees(wb, current_month, excluded_tracks=None):
     2025/2026 시트 데이터 통합 및 미납 금액 계산
 
     Returns:
-        dict: {(name, track): {'name': str, 'track': str, 'unpaid_amount': int}}
+        dict: {(name, track): {'name': str, 'track': str, 'unpaid_amount': int,
+                               'monthly_amount': int, 'unpaid_semesters': list[str]}}
     """
     if excluded_tracks is None:
         excluded_tracks = set()
