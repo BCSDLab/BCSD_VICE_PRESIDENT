@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 import openpyxl
+from common.fee_notice import _render_fee_notice_message
 
 
 # ============================================================================
@@ -554,11 +555,14 @@ def generate_message_files(unpaid_data, output_dir, template_path):
     for (name, track), data in unpaid_data.items():
         unpaid_detail = _format_unpaid_detail(name, data, last_day.year, last_day.month, last_day.day)
 
-        message = template_content.replace("{발신자}", sender_name)
-        message = message.replace("{전화번호}", sender_phone)
-        message = message.replace("{멘션}", f"@{sender_name}" if sender_name else "{멘션}")
-        message = message.replace("{미납내역}", unpaid_detail)
-        message = message.replace("{납부문서URL}", fee_sheet_url)
+        message = _render_fee_notice_message(
+            template_content=template_content,
+            sender_name=sender_name,
+            sender_phone=sender_phone,
+            mention=f"@{sender_name}" if sender_name else "{멘션}",
+            unpaid_detail=unpaid_detail,
+            fee_sheet_url=fee_sheet_url,
+        )
 
         filename = generate_unique_filename(name, track, used_filenames)
         filepath = os.path.join(output_dir, filename)
@@ -625,11 +629,14 @@ def send_slack_dms(unpaid_data, template_path):
             continue
 
         unpaid_detail = _format_unpaid_detail(name, data, last_day.year, last_day.month, last_day.day)
-        message = template_content.replace("{발신자}", sender_name)
-        message = message.replace("{전화번호}", sender_phone)
-        message = message.replace("{멘션}", f"<@{sender_id}>")
-        message = message.replace("{미납내역}", unpaid_detail)
-        message = message.replace("{납부문서URL}", fee_sheet_url)
+        message = _render_fee_notice_message(
+            template_content=template_content,
+            sender_name=sender_name,
+            sender_phone=sender_phone,
+            mention=f"<@{sender_id}>",
+            unpaid_detail=unpaid_detail,
+            fee_sheet_url=fee_sheet_url,
+        )
 
         try:
             dm_resp = client.conversations_open(users=[user_id])

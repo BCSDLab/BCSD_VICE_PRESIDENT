@@ -3,7 +3,7 @@ import requests
 from dotenv import load_dotenv
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
-from urllib.parse import urlparse, parse_qs
+from common.google_drive import _extract_drive_file_id
 
 load_dotenv()
 _GOOGLE_SECRET_JSON = os.getenv('GOOGLE_SERVICE_ACCOUNT_JSON') or os.getenv('GOOGLE_SECRET_JSON')
@@ -22,15 +22,6 @@ _credentials = service_account.Credentials.from_service_account_file(
 )
 _docs_service = build('docs', 'v1', credentials=_credentials)
 _drive_service = build('drive', 'v3', credentials=_credentials)
-
-def _extract_id(url):
-    """URL에서 Drive 파일 ID 추출"""
-    if '/d/' in url:
-        return url.split('/d/')[1].split('/')[0]
-    if 'id=' in url:
-        return parse_qs(urlparse(url).query).get('id', [None])[0]
-    return None
-
 
 def _get_urls_from_doc(doc_id):
     """Google Docs API로 문서에서 이미지 URL 추출"""
@@ -62,7 +53,7 @@ def _get_urls_from_doc(doc_id):
 def _get_urls(url):
     if not url: return []
 
-    file_id = _extract_id(url)
+    file_id = _extract_drive_file_id(url)
 
     # Drive 직접 링크인 경우 MIME 타입 확인
     if file_id and 'docs.google.com' not in url:

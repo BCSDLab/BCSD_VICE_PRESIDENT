@@ -17,15 +17,18 @@ import os
 import re
 import sys
 import argparse
-import tempfile
 from collections import Counter
 from copy import copy
 from datetime import datetime
-from urllib.parse import urlparse, parse_qs
 
 import openpyxl
 from openpyxl.styles import Border, Font, Side
 from openpyxl.utils import get_column_letter
+from common.google_drive import (
+    _extract_drive_folder_id,
+    _extract_sheet_id,
+    _download_request_to_tempfile,
+)
 
 try:
     from googleapiclient.errors import HttpError as _HttpError
@@ -57,14 +60,6 @@ _L_AMOUNT  = get_column_letter(COL_AMOUNT)  # H
 
 GOOGLE_TOKEN_FILE = '.google_token.json'
 _GOOGLE_SCOPES = ['https://www.googleapis.com/auth/drive']
-
-
-def _extract_sheet_id(url):
-    """Google Sheets URL에서 스프레드시트 ID 추출."""
-    match = re.search(r'/spreadsheets/d/([a-zA-Z0-9_-]+)', url)
-    if not match:
-        raise ValueError(f"Google Sheets URL에서 ID를 파싱할 수 없습니다: {url}")
-    return match.group(1)
 
 
 def _get_drive_service():
@@ -116,8 +111,6 @@ def download_sheet_as_xlsx(url):
     Returns:
         (sheet_id, tmp_path) — 호출자가 tmp_path를 사용 후 삭제 책임
     """
-    from googleapiclient.http import MediaIoBaseDownload
-
     sheet_id = _extract_sheet_id(url)
     drive = _get_drive_service()
 
@@ -125,30 +118,7 @@ def download_sheet_as_xlsx(url):
         fileId=sheet_id,
         mimeType='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     )
-
-    buf = io.BytesIO()
-    downloader = MediaIoBaseDownload(buf, request)
-    done = False
-    while not done:
-        _, done = downloader.next_chunk()
-
-    tmp = tempfile.NamedTemporaryFile(suffix='.xlsx', delete=False)
-    try:
-        tmp.write(buf.getvalue())
-        tmp.close()
-    except Exception:
-        tmp.close()
-        os.unlink(tmp.name)
-        raise
-
-    return sheet_id, tmp.name
-
-
-def _extract_drive_folder_id(url):
-    """Google Drive 폴더 URL에서 폴더 ID 추출."""
-    if '/folders/' in url:
-        return url.split('/folders/')[1].split('/')[0].split('?')[0]
-    return parse_qs(urlparse(url).query).get('id', [None])[0]
+    return sheet_id, _download_request_to_tempfile(request, suffix='.xlsx')
 
 
 def _find_latest_transaction_in_folder(drive, folder_id):
@@ -191,8 +161,6 @@ def download_transaction_from_drive(url):
     Returns:
         (original_filename, tmp_path) — 호출자가 tmp_path를 사용 후 삭제 책임
     """
-    from googleapiclient.http import MediaIoBaseDownload
-
     folder_id = _extract_drive_folder_id(url)
     if not folder_id:
         raise ValueError(f"Google Drive 폴더 URL에서 ID를 파싱할 수 없습니다: {url}")
@@ -201,22 +169,7 @@ def download_transaction_from_drive(url):
     file_id, original_name = _find_latest_transaction_in_folder(drive, folder_id)
 
     request = drive.files().get_media(fileId=file_id, supportsAllDrives=True)
-    buf = io.BytesIO()
-    downloader = MediaIoBaseDownload(buf, request)
-    done = False
-    while not done:
-        _, done = downloader.next_chunk()
-
-    tmp = tempfile.NamedTemporaryFile(suffix='.xlsx', delete=False)
-    try:
-        tmp.write(buf.getvalue())
-        tmp.close()
-    except Exception:
-        tmp.close()
-        os.unlink(tmp.name)
-        raise
-
-    return original_name, tmp.name
+    return original_name, _download_request_to_tempfile(request, suffix='.xlsx')
 
 
 def upload_xlsx_to_sheet(sheet_id, local_path):
