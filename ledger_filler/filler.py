@@ -18,11 +18,9 @@ import re
 import sys
 import argparse
 from collections import Counter
-from copy import copy
 from datetime import datetime
 
 import openpyxl
-from openpyxl.styles import Border, Font, Side
 from openpyxl.utils import get_column_letter
 from common.google_drive import (
     _extract_drive_folder_id,
@@ -55,23 +53,22 @@ _L_AMOUNT  = get_column_letter(COL_AMOUNT)  # H
 
 
 # ============================================================================
-# Google Drive integration
+# Google Auth
 # ============================================================================
 
 GOOGLE_TOKEN_FILE = '.google_token.json'
 _GOOGLE_SCOPES = ['https://www.googleapis.com/auth/drive']
 
 
-def _get_drive_service():
-    """OAuth 인증을 통한 Drive 서비스 객체 반환. 토큰은 GOOGLE_TOKEN_FILE에 캐시."""
+def _get_credentials():
+    """OAuth 인증 credentials 반환. 토큰은 GOOGLE_TOKEN_FILE에 캐시."""
     try:
         from google.oauth2.credentials import Credentials
         from google.auth.transport.requests import Request
         from google_auth_oauthlib.flow import InstalledAppFlow
-        from googleapiclient.discovery import build
     except ImportError as err:
         raise ImportError(
-            "Google Drive 연동에 필요한 패키지가 없습니다: pip install google-auth google-auth-oauthlib google-api-python-client"
+            "Google 연동에 필요한 패키지가 없습니다: pip install google-auth google-auth-oauthlib google-api-python-client"
         ) from err
 
     creds = None
@@ -101,25 +98,24 @@ def _get_drive_service():
         with os.fdopen(fd, 'w') as f:
             f.write(creds.to_json())
 
-    return build('drive', 'v3', credentials=creds)
+    return creds
 
 
-def download_sheet_as_xlsx(url):
-    """
-    Google Sheets를 임시 xlsx 파일로 내보내기.
+def _get_drive_service():
+    """Drive v3 서비스 객체 반환."""
+    from googleapiclient.discovery import build
+    return build('drive', 'v3', credentials=_get_credentials())
 
-    Returns:
-        (sheet_id, tmp_path) — 호출자가 tmp_path를 사용 후 삭제 책임
-    """
-    sheet_id = _extract_sheet_id(url)
-    drive = _get_drive_service()
 
-    request = drive.files().export_media(
-        fileId=sheet_id,
-        mimeType='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    )
-    return sheet_id, _download_request_to_tempfile(request, suffix='.xlsx')
+def _get_sheets_service():
+    """Sheets v4 서비스 객체 반환."""
+    from googleapiclient.discovery import build
+    return build('sheets', 'v4', credentials=_get_credentials())
 
+
+# ============================================================================
+# Google Drive integration
+# ============================================================================
 
 def _find_latest_transaction_in_folder(drive, folder_id):
     """폴더 내 신한_거래내역_YYMM.xlsx 파일 중 가장 최신 파일의 (file_id, name) 반환."""
@@ -156,8 +152,6 @@ def download_transaction_from_drive(url):
     """
     Google Drive 폴더에서 최신 거래내역 xlsx 파일 다운로드.
 
-    폴더 내 신한_거래내역_YYMM.xlsx 중 가장 최신 파일을 다운로드.
-
     Returns:
         (original_filename, tmp_path) — 호출자가 tmp_path를 사용 후 삭제 책임
     """
@@ -170,24 +164,6 @@ def download_transaction_from_drive(url):
 
     request = drive.files().get_media(fileId=file_id, supportsAllDrives=True)
     return original_name, _download_request_to_tempfile(request, suffix='.xlsx')
-
-
-def upload_xlsx_to_sheet(sheet_id, local_path):
-    """로컬 xlsx 파일을 Google Sheets 파일로 업로드하여 내용을 교체."""
-    from googleapiclient.http import MediaFileUpload
-
-    drive = _get_drive_service()
-    media = MediaFileUpload(
-        local_path,
-        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        resumable=True,
-    )
-    drive.files().update(
-        fileId=sheet_id,
-        body={'mimeType': 'application/vnd.google-apps.spreadsheet'},
-        media_body=media,
-        supportsAllDrives=True,
-    ).execute()
 
 
 # ============================================================================
@@ -205,6 +181,8 @@ def parse_transaction_file(filepath):
     wb = openpyxl.load_workbook(filepath, data_only=True)
     try:
         ws = wb.active
+        if ws is None:
+            return []
         transactions = []
 
         for row in ws.iter_rows(min_row=2, values_only=True):
@@ -233,9 +211,9 @@ def parse_transaction_file(filepath):
             else:
                 continue
             if isinstance(date_str, datetime):
-                date_value = date_str.strftime('%Y.%m.%d')
+                date_value = date_str.strftime('%Y.%m.%d %H:%M:%S')
             else:
-                date_value = str(date_str).split()[0]
+                date_value = str(date_str)
             if isinstance(balance, (int, float)):
                 safe_balance = balance
             elif isinstance(balance, str):
@@ -272,132 +250,135 @@ def get_year_month_from_filename(filepath):
 
 
 # ============================================================================
-# Sheet manipulation
+# Sheets API helpers
 # ============================================================================
 
-def find_month_section(ws, month):
+def _get_sheet_gid(sheets, spreadsheet_id, sheet_name):
+    """시트 이름으로 sheetId(gid) 반환."""
+    result = sheets.spreadsheets().get(
+        spreadsheetId=spreadsheet_id,
+        fields='sheets.properties',
+    ).execute()
+    for sheet in result.get('sheets', []):
+        props = sheet.get('properties', {})
+        if props.get('title') == sheet_name:
+            return props['sheetId']
+    raise ValueError(f"시트 '{sheet_name}'를 찾을 수 없습니다.")
+
+
+def _read_col_c(sheets, spreadsheet_id, sheet_name):
+    """C열 전체 값 읽기. 리스트[0] = 행1, 빈 셀은 '' 반환."""
+    result = sheets.spreadsheets().values().get(
+        spreadsheetId=spreadsheet_id,
+        range=f"'{sheet_name}'!C:C",
+    ).execute()
+    rows = result.get('values', [])
+    return [row[0] if row else '' for row in rows]
+
+
+def _find_month_section_api(sheets, spreadsheet_id, sheet_name, month):
     """
-    월 헤더 행과 소계 행 번호 반환.
+    월 섹션의 header_row, sogyeyu_row 반환 (1-based).
 
     Returns:
-        (header_row, sogyeyu_row) or (None, None) if not found
+        (header_row, sogyeyu_row) or (None, None)
     """
     month_label = f"{month}월"
+    col_c = _read_col_c(sheets, spreadsheet_id, sheet_name)
+
     header_row = None
-    for row_idx in range(2, ws.max_row + 1):
-        if ws.cell(row=row_idx, column=COL_MONTH).value == month_label:
-            header_row = row_idx
+    for i, val in enumerate(col_c):
+        if val == month_label:
+            header_row = i + 1  # 1-based
             break
+
     if header_row is None:
         return None, None
 
     sogyeyu_row = None
-    for row_idx in range(header_row + 1, ws.max_row + 1):
-        if ws.cell(row=row_idx, column=COL_MONTH).value == '소계':
-            sogyeyu_row = row_idx
+    for i in range(header_row, len(col_c)):  # header_row 인덱스(0-based) = header_row+1 행(1-based) 부터
+        if col_c[i] == '소계':
+            sogyeyu_row = i + 1  # 1-based
             break
 
     return header_row, sogyeyu_row
 
 
-def find_total_row(ws):
-    """합계 행 번호 반환."""
-    for row_idx in range(2, ws.max_row + 1):
-        if ws.cell(row=row_idx, column=COL_MONTH).value == '합계':
-            return row_idx
-    return None
+def _is_month_filled_api(sheets, spreadsheet_id, sheet_name, header_row):
+    """월 섹션이 이미 기입되었는지 확인 (날짜 셀 기준)."""
+    col_d = get_column_letter(COL_DATE)
+    result = sheets.spreadsheets().values().get(
+        spreadsheetId=spreadsheet_id,
+        range=f"'{sheet_name}'!{col_d}{header_row}",
+    ).execute()
+    return bool(result.get('values'))
 
 
-def is_month_filled(ws, header_row):
-    """월 데이터가 이미 기입되어 있는지 확인 (날짜 셀 기준)."""
-    return ws.cell(row=header_row, column=COL_DATE).value is not None
-
-
-def _unmerge_c_column(ws, header_row):
-    """해당 월의 C열 병합 해제. header_row에서 시작하는 C열 병합만 제거."""
-    to_remove = [
-        str(m) for m in ws.merged_cells.ranges
-        if m.min_col == COL_MONTH and m.max_col == COL_MONTH and m.min_row == header_row
-    ]
-    for range_str in to_remove:
-        ws.unmerge_cells(range_str)
-
-
-def _remerge_c_column(ws, header_row, data_end_row):
-    """데이터 범위의 C열 재병합."""
-    if data_end_row > header_row:
-        ws.merge_cells(
-            start_row=header_row, start_column=COL_MONTH,
-            end_row=data_end_row, end_column=COL_MONTH,
-        )
-
-
-def _collect_and_unmerge_downstream_c(ws, from_row):
+def _read_jan_template(sheets, spreadsheet_id, sheet_name):
     """
-    from_row 이후에 시작하는 C열 병합 범위를 수집하고 해제.
-
-    openpyxl의 insert_rows/delete_rows가 병합 셀 범위를 자동으로
-    갱신하지 않는 경우를 대비하여, 행 삽입/삭제 전에 호출한다.
+    1월 섹션 범위와 날짜 저장 방식 반환.
 
     Returns:
-        list of (min_row, max_row) tuples
+        (jan_header, jan_sogyeyu, date_is_serial)
+        - jan_header, jan_sogyeyu: 1-based 행 번호 (None이면 1월 데이터 없음)
+        - date_is_serial: True이면 날짜가 date serial(숫자), False이면 문자열
     """
-    affected = [
-        (m.min_row, m.max_row)
-        for m in list(ws.merged_cells.ranges)
-        if m.min_col == COL_MONTH and m.max_col == COL_MONTH and m.min_row >= from_row
-    ]
-    for min_row, max_row in affected:
-        ws.unmerge_cells(
-            start_row=min_row, start_column=COL_MONTH,
-            end_row=max_row, end_column=COL_MONTH,
-        )
-    return affected
+    jan_header, jan_sogyeyu = _find_month_section_api(sheets, spreadsheet_id, sheet_name, 1)
+    if jan_header is None or jan_sogyeyu is None:
+        return None, None, False
+    if not _is_month_filled_api(sheets, spreadsheet_id, sheet_name, jan_header):
+        return None, None, False
+
+    # D열(날짜) 셀의 userEnteredValue로 저장 방식 판별 (중간 행 기준)
+    sample_row = jan_header + 1 if jan_sogyeyu - jan_header > 1 else jan_header
+    col_d = get_column_letter(COL_DATE)
+    result = sheets.spreadsheets().get(
+        spreadsheetId=spreadsheet_id,
+        ranges=[f"'{sheet_name}'!{col_d}{sample_row}"],
+        fields='sheets.data.rowData.values.userEnteredValue',
+        includeGridData=True,
+    ).execute()
+    try:
+        uev = (result['sheets'][0]['data'][0]['rowData'][0]
+               ['values'][0].get('userEnteredValue', {}))
+        date_is_serial = 'numberValue' in uev
+    except (KeyError, IndexError):
+        date_is_serial = False
+
+    return jan_header, jan_sogyeyu, date_is_serial
 
 
-def _remerge_with_offset(ws, ranges, delta):
-    """저장된 C열 병합 범위를 delta만큼 행 번호를 이동하여 재병합."""
-    for min_row, max_row in ranges:
-        new_min = min_row + delta
-        new_max = max_row + delta
-        if new_max >= new_min:
-            ws.merge_cells(
-                start_row=new_min, start_column=COL_MONTH,
-                end_row=new_max, end_column=COL_MONTH,
-            )
+def _date_str_to_sheets_serial(date_str):
+    """'YYYY.MM.DD[...]' 문자열을 Google Sheets date serial(숫자)로 변환."""
+    from datetime import date
+    date_only = date_str[:10]  # 시간 부분 무시
+    y, m, d = (int(x) for x in date_only.split('.'))
+    return (date(y, m, d) - date(1970, 1, 1)).days + 25569
 
 
-def _capture_row_styles(ws, row_idx):
-    """지정 행의 C~I열 셀 서식 캡처."""
-    styles = {}
-    for col in range(COL_MONTH, COL_BALANCE + 1):
-        cell = ws.cell(row=row_idx, column=col)
-        styles[col] = {
-            'font': copy(cell.font),
-            'fill': copy(cell.fill),
-            'border': copy(cell.border),
-            'alignment': copy(cell.alignment),
-            'number_format': cell.number_format,
-            'protection': copy(cell.protection),
-        }
-    return styles
+def _check_manual_entries(sheets, spreadsheet_id, sheet_name, start_row, end_row):
+    """삭제될 행에 수동 기입 항목(E, G열)이 있으면 경고."""
+    if start_row > end_row:
+        return
+    for col, col_name in [(COL_DESC, 'E열'), (COL_NOTE, 'G열')]:
+        col_letter = get_column_letter(col)
+        result = sheets.spreadsheets().values().get(
+            spreadsheetId=spreadsheet_id,
+            range=f"'{sheet_name}'!{col_letter}{start_row}:{col_letter}{end_row}",
+        ).execute()
+        for i, row_vals in enumerate(result.get('values', [])):
+            if row_vals and row_vals[0]:
+                print(f"[WARNING] 행 {start_row + i}의 수동 기입 항목({col_name})이 삭제됩니다.")
 
 
-def _apply_row_styles(ws, row_idx, styles):
-    """캡처된 서식을 지정 행에 적용."""
-    for col, style in styles.items():
-        cell = ws.cell(row=row_idx, column=col)
-        cell.font = copy(style['font'])
-        cell.fill = copy(style['fill'])
-        cell.border = copy(style['border'])
-        cell.alignment = copy(style['alignment'])
-        cell.number_format = style['number_format']
-        cell.protection = copy(style['protection'])
+# ============================================================================
+# Sheet fill (Sheets API)
+# ============================================================================
 
-
-def fill_month(ws, month, transactions, force=False, receipt_map=None):
+def fill_month_api(sheets, spreadsheet_id, sheet_name, gid, month, transactions,
+                   force=False, receipt_map=None):
     """
-    해당 월의 거래내역을 관리 문서 시트에 기입.
+    Sheets API를 사용하여 월 거래내역 기입.
 
     Returns:
         True  — 기입 완료
@@ -405,13 +386,13 @@ def fill_month(ws, month, transactions, force=False, receipt_map=None):
         False — 오류
     """
     month_label = f"{month}월"
-    header_row, sogyeyu_row = find_month_section(ws, month)
+    header_row, sogyeyu_row = _find_month_section_api(sheets, spreadsheet_id, sheet_name, month)
 
     if header_row is None or sogyeyu_row is None:
         print(f"[ERROR] {month_label} 섹션을 찾을 수 없습니다.")
         return False
 
-    if is_month_filled(ws, header_row):
+    if _is_month_filled_api(sheets, spreadsheet_id, sheet_name, header_row):
         if not force:
             print(f"[WARNING] {month_label} 데이터가 이미 존재합니다. 건너뜁니다. (덮어쓰려면 --force 사용)")
             return None
@@ -422,108 +403,200 @@ def fill_month(ws, month, transactions, force=False, receipt_map=None):
         print(f"[WARNING] {month_label} 거래 내역이 없습니다.")
         return True
 
-    # 현재 플레이스홀더 행 수 (서식 캡처 전에 먼저 계산)
-    placeholder_rows = sogyeyu_row - header_row  # 예: 2월: 53-48=5
+    placeholder_rows = sogyeyu_row - header_row
+    delta = tx_count - placeholder_rows
+    new_sogyeyu_row = sogyeyu_row + delta
+    data_end = header_row + tx_count - 1
 
-    # 서식 캡처: 새 행에 적용할 "내부 행" 스타일
-    # header_row는 top=medium(굵은 상단)이므로, 내부 행(header_row+1)에서 가져옴
-    style_template_row = header_row + 1 if placeholder_rows > 1 else header_row
-    row_style = _capture_row_styles(ws, style_template_row)
+    # 삭제될 행에 수동 기입 항목 경고
+    if delta < 0:
+        _check_manual_entries(
+            sheets, spreadsheet_id, sheet_name,
+            header_row + tx_count, sogyeyu_row - 1,
+        )
 
-    # C열 병합 해제 (MergedCell 쓰기 오류 방지)
-    _unmerge_c_column(ws, header_row)
+    # ── 구조 변경 ──────────────────────────────────────────────────────────
+    struct_requests = []
 
-    if tx_count > placeholder_rows:
-        rows_to_insert = tx_count - placeholder_rows
-        # 이후 월의 C열 병합 범위를 먼저 수집·해제 (insert_rows가 자동으로
-        # 갱신하지 않는 경우 대비)
-        downstream = _collect_and_unmerge_downstream_c(ws, sogyeyu_row)
-        ws.insert_rows(sogyeyu_row, rows_to_insert)
-        sogyeyu_row += rows_to_insert
-        _remerge_with_offset(ws, downstream, rows_to_insert)
-    elif tx_count < placeholder_rows:
-        rows_to_delete = placeholder_rows - tx_count
-        # 삭제될 행에 수동 기입 항목이 있으면 경고
-        for r in range(header_row + tx_count, header_row + placeholder_rows):
-            desc = ws.cell(row=r, column=COL_DESC).value
-            note = ws.cell(row=r, column=COL_NOTE).value
-            if desc or note:
-                cols = []
-                if desc:
-                    cols.append("E열")
-                if note:
-                    cols.append("G열")
-                print(f"[WARNING] 행 {r}의 수동 기입 항목({', '.join(cols)})이 삭제됩니다.")
-        downstream = _collect_and_unmerge_downstream_c(ws, sogyeyu_row)
-        ws.delete_rows(header_row + tx_count, rows_to_delete)
-        sogyeyu_row -= rows_to_delete
-        _remerge_with_offset(ws, downstream, -rows_to_delete)
+    # 1. C열 병합 해제
+    struct_requests.append({
+        'unmergeCells': {
+            'range': {
+                'sheetId': gid,
+                'startRowIndex': header_row - 1,
+                'endRowIndex': sogyeyu_row - 1,
+                'startColumnIndex': COL_MONTH - 1,
+                'endColumnIndex': COL_MONTH,
+            },
+        },
+    })
 
-    # 데이터 기입 (C열은 첫 행만 값, 나머지는 None → 이후 재병합)
-    for i, (date_str, amount, name, balance) in enumerate(transactions):
-        row_idx = header_row + i
-        # 새로 삽입된 행(기존 플레이스홀더 범위 초과)에만 서식 복사
-        if i >= placeholder_rows:
-            _apply_row_styles(ws, row_idx, row_style)
-        ws.cell(row=row_idx, column=COL_MONTH).value = month_label if i == 0 else None
-        ws.cell(row=row_idx, column=COL_DATE).value = date_str
-        ws.cell(row=row_idx, column=COL_NAME).value = name
-        ws.cell(row=row_idx, column=COL_AMOUNT).value = amount
-        ws.cell(row=row_idx, column=COL_BALANCE).value = balance
+    # 2. 행 삽입/삭제
+    #    삽입 시 inheritFromBefore=True: 바로 위 기존 행의 서식을 그대로 복사.
+    #    별도 서식 복사 없이 기존 플레이스홀더 행 서식이 자동 적용됨.
+    if delta > 0:
+        struct_requests.append({
+            'insertDimension': {
+                'range': {
+                    'sheetId': gid,
+                    'dimension': 'ROWS',
+                    'startIndex': sogyeyu_row - 1,
+                    'endIndex': sogyeyu_row - 1 + delta,
+                },
+                'inheritFromBefore': True,
+            },
+        })
+    elif delta < 0:
+        struct_requests.append({
+            'deleteDimension': {
+                'range': {
+                    'sheetId': gid,
+                    'dimension': 'ROWS',
+                    'startIndex': header_row + tx_count - 1,
+                    'endIndex': header_row + placeholder_rows - 1,
+                },
+            },
+        })
 
-        # E열: 출금이고 영수증 매칭 결과가 있으면 하이퍼링크 기입
-        if amount < 0 and receipt_map:
-            key = (date_str, int(abs(amount)))
-            if key in receipt_map:
-                title, url = receipt_map[key]
-                cell = ws.cell(row=row_idx, column=COL_DESC)
-                cell.value = title
-                cell.hyperlink = url
-                # E6 하이퍼링크 셀 스타일과 동일하게 적용
-                cell.font = Font(underline='single', color='0000FF')
+    # 3. 데이터 행 D~I 테두리 명시적 복원 (이전 실행에서 손상된 서식 복구)
+    _data_range = {
+        'sheetId': gid,
+        'startRowIndex': header_row - 1,
+        'endRowIndex': data_end,
+    }
+    _solid   = {'style': 'SOLID'}
+    _solid_m = {'style': 'SOLID_MEDIUM'}
+    struct_requests.append({
+        'updateBorders': {
+            'range': {**_data_range,
+                      'startColumnIndex': COL_DATE - 1,
+                      'endColumnIndex': COL_BALANCE},
+            'top': _solid_m,          # 섹션 첫 행 상단
+            'bottom': _solid,
+            'left': _solid,
+            'right': _solid,
+            'innerHorizontal': _solid,
+            'innerVertical': _solid,
+        },
+    })
+    # I열 우측 테두리만 SOLID_MEDIUM으로 덮어쓰기
+    struct_requests.append({
+        'updateBorders': {
+            'range': {**_data_range,
+                      'startColumnIndex': COL_BALANCE - 1,
+                      'endColumnIndex': COL_BALANCE},
+            'right': _solid_m,
+        },
+    })
+    # E열 textFormat 삭제: 명시적 폰트 색을 완전히 제거해 =HYPERLINK() 기본 파란색으로 표시.
+    # cell에 textFormat을 포함하지 않으면 fields 마스크가 해당 필드를 unset(삭제)으로 처리.
+    struct_requests.append({
+        'repeatCell': {
+            'range': {**_data_range,
+                      'startColumnIndex': COL_DESC - 1,
+                      'endColumnIndex': COL_DESC},
+            'cell': {'userEnteredFormat': {}},
+            'fields': 'userEnteredFormat.textFormat',
+        },
+    })
 
-    # 내부 행 상단 테두리 복원: header_row만 top=medium, 나머지는 top=None
-    # (이전 실행에서 잘못 적용된 medium border가 남아 있는 경우도 교정)
-    _no_top = Side(border_style=None)
-    for i in range(1, tx_count):  # header_row 제외
-        row_idx = header_row + i
-        for col in range(COL_DATE, COL_BALANCE + 1):  # D~I (C는 병합으로 처리)
-            cell = ws.cell(row=row_idx, column=col)
-            b = cell.border
-            cell.border = Border(
-                top=_no_top,
-                bottom=copy(b.bottom),
-                left=copy(b.left),
-                right=copy(b.right),
-            )
+    # 4. C열 재병합
+    struct_requests.append({
+        'mergeCells': {
+            'range': {
+                'sheetId': gid,
+                'startRowIndex': header_row - 1,
+                'endRowIndex': new_sogyeyu_row - 1,
+                'startColumnIndex': COL_MONTH - 1,
+                'endColumnIndex': COL_MONTH,
+            },
+            'mergeType': 'MERGE_ALL',
+        },
+    })
 
-    # C열 재병합
-    data_end = sogyeyu_row - 1
-    _remerge_c_column(ws, header_row, data_end)
+    sheets.spreadsheets().batchUpdate(
+        spreadsheetId=spreadsheet_id,
+        body={'requests': struct_requests},
+    ).execute()
 
-    # 소계 수식 갱신
-    ws.cell(row=sogyeyu_row, column=COL_MONTH).value = '소계'
-    ws.cell(row=sogyeyu_row, column=COL_DATE).value = '입금'
-    ws.cell(row=sogyeyu_row, column=COL_DESC).value = f'=SUMIF({_L_AMOUNT}{header_row}:{_L_AMOUNT}{data_end},">0")'
-    ws.cell(row=sogyeyu_row, column=COL_NAME).value = '출금'
-    ws.cell(row=sogyeyu_row, column=COL_NOTE).value = f'=SUMIF({_L_AMOUNT}{header_row}:{_L_AMOUNT}{data_end},"<0")*-1'
-    ws.cell(row=sogyeyu_row, column=COL_AMOUNT).value = '합계'
-    ws.cell(row=sogyeyu_row, column=COL_BALANCE).value = f'={_L_DESC}{sogyeyu_row}-{_L_NOTE}{sogyeyu_row}'
+    # ── 값 기입 ────────────────────────────────────────────────────────────
+    col_c = get_column_letter(COL_MONTH)
+    col_d = get_column_letter(COL_DATE)
+    col_e = get_column_letter(COL_DESC)
+    col_f = get_column_letter(COL_NAME)
+    col_h = get_column_letter(COL_AMOUNT)
+    col_i = get_column_letter(COL_BALANCE)
 
-    print(f"[INFO] {month_label} 거래 {tx_count}건 기입 완료 (행 {header_row}~{data_end}, 소계 행 {sogyeyu_row})")
+    raw_data = [
+        {'range': f"'{sheet_name}'!{col_c}{header_row}",
+         'values': [[month_label]]},
+        {'range': f"'{sheet_name}'!{col_d}{header_row}:{col_d}{data_end}",
+         'values': [[ds] for ds, *_ in transactions]},
+        {'range': f"'{sheet_name}'!{col_f}{header_row}:{col_f}{data_end}",
+         'values': [[name] for _, _, name, _ in transactions]},
+        {'range': f"'{sheet_name}'!{col_h}{header_row}:{col_h}{data_end}",
+         'values': [[amount] for _, amount, *_ in transactions]},
+        {'range': f"'{sheet_name}'!{col_i}{header_row}:{col_i}{data_end}",
+         'values': [[bal if bal is not None else ''] for _, _, _, bal in transactions]},
+    ]
+    sheets.spreadsheets().values().batchUpdate(
+        spreadsheetId=spreadsheet_id,
+        body={'valueInputOption': 'RAW', 'data': raw_data},
+    ).execute()
+
+    # 수식은 USER_ENTERED로 별도 기입
+    formula_data = [
+        {'range': f"'{sheet_name}'!C{new_sogyeyu_row}:I{new_sogyeyu_row}",
+         'values': [[
+             '소계', '입금',
+             f'=SUMIF({_L_AMOUNT}{header_row}:{_L_AMOUNT}{data_end},">0")',
+             '출금',
+             f'=SUMIF({_L_AMOUNT}{header_row}:{_L_AMOUNT}{data_end},"<0")*-1',
+             '합계',
+             f'={_L_DESC}{new_sogyeyu_row}-{_L_NOTE}{new_sogyeyu_row}',
+         ]]},
+    ]
+
+    # E열: 출금+영수증 매칭 시에만 HYPERLINK 수식 기입 (수동 기입 셀은 건드리지 않음)
+    if receipt_map:
+        for i, (date_str, amount, *_) in enumerate(transactions):
+            if amount < 0:
+                key = (date_str[:10], int(abs(amount)))
+                if key in receipt_map:
+                    title, url = receipt_map[key]
+                    safe_url = url.replace('"', '%22')
+                    safe_title = title.replace('"', '""')
+                    formula_data.append({
+                        'range': f"'{sheet_name}'!{col_e}{header_row + i}",
+                        'values': [[f'=HYPERLINK("{safe_url}","{safe_title}")']],
+                    })
+
+    sheets.spreadsheets().values().batchUpdate(
+        spreadsheetId=spreadsheet_id,
+        body={'valueInputOption': 'USER_ENTERED', 'data': formula_data},
+    ).execute()
+
+    print(f"[INFO] {month_label} 거래 {tx_count}건 기입 완료 (행 {header_row}~{data_end}, 소계 행 {new_sogyeyu_row})")
     return True
 
 
-def update_total_formula(ws):
+def update_total_formula_api(sheets, spreadsheet_id, sheet_name):
     """합계 행의 SUM 수식을 현재 소계 행 위치에 맞게 갱신."""
-    total_row = find_total_row(ws)
+    col_c = _read_col_c(sheets, spreadsheet_id, sheet_name)
+
+    total_row = None
+    for i, val in enumerate(col_c):
+        if val == '합계':
+            total_row = i + 1  # 1-based
+            break
+
     if total_row is None:
         return
 
     sogyeyu_rows = [
-        row_idx
-        for row_idx in range(2, total_row)
-        if ws.cell(row=row_idx, column=COL_MONTH).value == '소계'
+        i + 1
+        for i, val in enumerate(col_c[:total_row - 1])
+        if val == '소계'
     ]
     if not sogyeyu_rows:
         return
@@ -531,13 +604,24 @@ def update_total_formula(ws):
     sum_e = ','.join(f'{_L_DESC}{r}' for r in sogyeyu_rows)
     sum_g = ','.join(f'{_L_NOTE}{r}' for r in sogyeyu_rows)
 
-    ws.cell(row=total_row, column=COL_MONTH).value = '합계'
-    ws.cell(row=total_row, column=COL_DATE).value = '입금'
-    ws.cell(row=total_row, column=COL_DESC).value = f'=SUM({sum_e})'
-    ws.cell(row=total_row, column=COL_NAME).value = '출금'
-    ws.cell(row=total_row, column=COL_NOTE).value = f'=SUM({sum_g})'
-    ws.cell(row=total_row, column=COL_AMOUNT).value = '합계'
-    ws.cell(row=total_row, column=COL_BALANCE).value = f'={_L_DESC}{total_row}-{_L_NOTE}{total_row}'
+    sheets.spreadsheets().values().batchUpdate(
+        spreadsheetId=spreadsheet_id,
+        body={
+            'valueInputOption': 'USER_ENTERED',
+            'data': [{
+                'range': f"'{sheet_name}'!C{total_row}:I{total_row}",
+                'values': [[
+                    '합계',
+                    '입금',
+                    f'=SUM({sum_e})',
+                    '출금',
+                    f'=SUM({sum_g})',
+                    '합계',
+                    f'={_L_DESC}{total_row}-{_L_NOTE}{total_row}',
+                ]],
+            }],
+        },
+    ).execute()
 
     print(f"[INFO] 합계 행({total_row}) 수식 갱신 완료")
 
@@ -567,9 +651,10 @@ def _list_receipt_candidates(drive, root_folder_id, date_str):
     """
     date_str(yyyy.mm.dd)로 시작하는 영수증 파일 목록 반환.
 
-    폴더 구조를 두 가지 방식으로 탐색:
-    1. root/{yyyy}/{mm} — 이름에 슬래시가 포함된 단일 폴더 (예: "2026/02")
-    2. root/{yyyy}/{mm}/ — 중첩 폴더
+    폴더 구조를 세 가지 방식으로 탐색:
+    1. root/"yyyy/mm" — 루트에 슬래시 포함 단일 폴더 (예: root/"2026/02")
+    2. root/yyyy/mm — 중첩 폴더 (예: root/2026/02 또는 root/2026/2)
+    3. root/yyyy/"yyyy/mm" — year 폴더 내 슬래시 포함 폴더 (예: root/2026/"2026/02")
 
     Returns list of {id, name, mimeType, webViewLink}.
     """
@@ -588,6 +673,9 @@ def _list_receipt_candidates(drive, root_folder_id, date_str):
             month_id = _find_drive_subfolder(drive, year_id, month)
             if not month_id:
                 month_id = _find_drive_subfolder(drive, year_id, str(int(month)))
+            # 방식 3: year 폴더 내에 "yyyy/mm" 이름의 폴더 (예: 2026/"2026/02")
+            if not month_id:
+                month_id = _find_drive_subfolder(drive, year_id, f"{year}/{month}")
 
     if not month_id:
         return []
@@ -701,8 +789,9 @@ def build_receipt_map(folder_url, transactions):
     receipt_map = {}
 
     # 동일 날짜·금액 출금이 2건 이상인 키는 어느 영수증인지 특정 불가 → 제외
+    # date_str에 시간이 포함되어 있어도 날짜 부분(앞 10자)만 사용한다.
     tx_counts = Counter(
-        (date_str, int(abs(amount)))
+        (date_str[:10], int(abs(amount)))
         for date_str, amount, *_ in transactions
         if amount < 0
     )
@@ -764,10 +853,6 @@ def main():
     print("=" * 60)
 
     tx_tmp_path = None
-    tmp_path = None
-    upload_ok = False
-    preserve_tmp_path = False
-    wb = None
 
     try:
         # 거래내역 파일 결정
@@ -798,20 +883,25 @@ def main():
             sys.exit(1)
         print(f"[INFO] 대상: {year}년 {month}월")
 
-        # 관리 문서 결정 (MANAGEMENT_SHEET_URL)
+        # 관리 문서 URL
         management_sheet_url = os.getenv('MANAGEMENT_SHEET_URL')
         if not management_sheet_url:
             print("[ERROR] MANAGEMENT_SHEET_URL 환경변수가 설정되지 않았습니다.")
             sys.exit(1)
 
-        print(f"[INFO] 관리 문서 (원격): {management_sheet_url}")
+        print(f"[INFO] 관리 문서: {management_sheet_url}")
+        spreadsheet_id = _extract_sheet_id(management_sheet_url)
+        sheet_name = f"{year}년"
+
+        # Sheets API 초기화 및 시트 확인
         try:
-            sheet_id, tmp_path = download_sheet_as_xlsx(management_sheet_url)
-            mgmt_file = tmp_path
-            print(f"[INFO] 다운로드 완료 → 임시 파일: {tmp_path}")
-        except (ValueError, OSError, _HttpError) as e:
-            print(f"[ERROR] Google Sheets 다운로드 실패: {e}")
+            sheets = _get_sheets_service()
+            gid = _get_sheet_gid(sheets, spreadsheet_id, sheet_name)
+        except (ValueError, _HttpError) as e:
+            print(f"[ERROR] Google Sheets 접근 실패: {e}")
             sys.exit(1)
+
+        print(f"[INFO] 시트 '{sheet_name}' 확인 완료")
 
         # 거래내역 파싱
         try:
@@ -820,18 +910,6 @@ def main():
             print(f"[ERROR] 거래내역 파일이 손상되었거나 읽을 수 없습니다: {e}")
             sys.exit(1)
         print(f"[INFO] 파싱된 거래 건수: {len(transactions)}건")
-
-        # 관리 문서 열기
-        try:
-            wb = openpyxl.load_workbook(mgmt_file)
-        except Exception as e:
-            print(f"[ERROR] 관리 문서 파일이 손상되었거나 읽을 수 없습니다: {e}")
-            sys.exit(1)
-        sheet_name = f"{year}년"
-        if sheet_name not in wb.sheetnames:
-            print(f"[ERROR] 시트 '{sheet_name}'를 찾을 수 없습니다. (존재하는 시트: {wb.sheetnames})")
-            sys.exit(1)
-        ws = wb[sheet_name]
 
         # 영수증 매칭
         receipt_map = {}
@@ -846,36 +924,21 @@ def main():
 
         # 데이터 기입
         print()
-        success = fill_month(ws, month, transactions, force=args.force, receipt_map=receipt_map)
+        success = fill_month_api(
+            sheets, spreadsheet_id, sheet_name, gid, month,
+            transactions, force=args.force, receipt_map=receipt_map,
+        )
         if success is False:
             sys.exit(1)
         if success is None:
             sys.exit(0)
 
         # 합계 수식 갱신
-        update_total_formula(ws)
-
-        # 저장 후 업로드
-        try:
-            wb.save(tmp_path)
-        except OSError as e:
-            print(f"[ERROR] 임시 파일 저장 실패: {e}")
-            sys.exit(1)
+        update_total_formula_api(sheets, spreadsheet_id, sheet_name)
 
         print()
         print("=" * 60)
-        try:
-            print("[INFO] Google Sheets로 업로드 중...")
-            upload_xlsx_to_sheet(sheet_id, tmp_path)
-            print(f"[INFO] 업로드 완료: {management_sheet_url}")
-            upload_ok = True
-        except (OSError, ValueError, _HttpError) as e:
-            print(f"[ERROR] 업로드 실패: {e}")
-            preserve_tmp_path = True
-
-        if not upload_ok:
-            sys.exit(1)
-
+        print(f"[INFO] 기입 완료: {management_sheet_url}")
         print("[INFO] 아래 항목은 수동으로 기입해주세요:")
         if not receipt_drive_url:
             print("       - E열 (내용): 회비 / 서버비 / 회식비 등")
@@ -885,12 +948,5 @@ def main():
         print("=" * 60)
 
     finally:
-        if wb is not None:
-            wb.close()
         if tx_tmp_path and os.path.exists(tx_tmp_path):
             os.remove(tx_tmp_path)
-        if tmp_path and os.path.exists(tmp_path):
-            if preserve_tmp_path:
-                print(f"[INFO] 로컬 임시 파일은 보존됩니다: {tmp_path}")
-            else:
-                os.remove(tmp_path)
