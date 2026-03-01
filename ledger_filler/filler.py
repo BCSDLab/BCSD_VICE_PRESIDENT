@@ -117,6 +117,24 @@ def _get_sheets_service():
 # Google Drive integration
 # ============================================================================
 
+def download_sheet_as_xlsx(url):
+    """
+    Google Sheets 문서를 xlsx 파일로 내보내 임시 파일에 저장.
+
+    Returns:
+        (spreadsheet_id, tmp_path) — 호출자가 tmp_path 삭제 책임
+    """
+    spreadsheet_id = _extract_sheet_id(url)
+    if not spreadsheet_id:
+        raise ValueError(f"Google Sheets URL에서 ID를 파싱할 수 없습니다: {url}")
+    drive = _get_drive_service()
+    request = drive.files().export_media(
+        fileId=spreadsheet_id,
+        mimeType='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    )
+    return spreadsheet_id, _download_request_to_tempfile(request, suffix='.xlsx')
+
+
 def _find_latest_transaction_in_folder(drive, folder_id):
     """폴더 내 신한_거래내역_YYMM.xlsx 파일 중 가장 최신 파일의 (file_id, name) 반환."""
     pattern = re.compile(r'신한_거래내역_(\d{4})\.xlsx$')
