@@ -603,7 +603,12 @@ def run(data, t_path: str, o_path: str):
             elif imgs:
                 print(f"  [{data_idx + 1}] 레이아웃 계산 실패 — 이미지 셀 비워둠")
         else:
-            print(f"  [{data_idx + 1}] 증빙 자료 누락 — 확인 필요")
+            print(f"  [{data_idx + 1}] 증빙 자료 누락 — 건너뜀")
+            continue
+
+        if not img_rows:
+            print(f"  [{data_idx + 1}] 유효한 이미지 없음 — 건너뜀")
+            continue
 
         tbl_elem, z = _build_table(title, img_rows, z, params, next_id)
 
