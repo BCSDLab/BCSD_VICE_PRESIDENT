@@ -110,7 +110,8 @@ def run(data, img_dir):
         if cached:
             img_paths_list.append(cached)
         else:
-            urls = _get_urls(row['링크'])
+            link = row['링크']
+            urls = _get_urls(link) if isinstance(link, str) and link.strip() else []
             paths = _download(urls, img_dir, prefix=prefix)
             img_paths_list.append(paths)
 
