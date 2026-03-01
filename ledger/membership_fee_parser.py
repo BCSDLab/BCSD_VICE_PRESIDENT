@@ -28,7 +28,8 @@ def parse_source(file_path):
         file_path, sheet_name=None, header=SOURCE_HEADER_ROW, usecols=SOURCE_COLS
     )
     year_pattern = re.compile(r'^\d{4}년$')
-    wb = openpyxl.load_workbook(file_path, data_only=True)
+    # data_only=False: 수식 문자열 그대로 읽어 =HYPERLINK("url","text") 파싱
+    wb = openpyxl.load_workbook(file_path, data_only=False)
 
     frames = []
     for name, df in all_sheets.items():
@@ -44,7 +45,13 @@ def parse_source(file_path):
         links = []
         for row in ws.iter_rows(min_row=data_start_row):
             content_cell = row[4]    # E열(내용)
-            link = content_cell.hyperlink.target if content_cell.hyperlink else None
+            if content_cell.hyperlink:
+                link = content_cell.hyperlink.target
+            elif isinstance(content_cell.value, str):
+                m = re.match(r'=HYPERLINK\("([^"]+)"', content_cell.value, re.IGNORECASE)
+                link = m.group(1) if m else None
+            else:
+                link = None
             links.append(link)
 
         df['링크'] = links[:len(df)]
