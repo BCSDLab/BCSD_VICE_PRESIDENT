@@ -51,7 +51,8 @@ def run(data, t_path, o_path):
             hwp.get_into_nth_table(i)
             i += 1
 
-            hwp.insert_text(f'{idx + 1}. {row["종류"]}')
+            fee_suffix = ' (이체 수수료 500원)' if row.get('이체수수료', False) else ''
+            hwp.insert_text(f'{idx + 1}. {row["종류"]}{fee_suffix}')
             hwp.TableLowerCell()
             if not row['img_paths']:
                 print(f"{idx}. 증빙 자료 누락. 확인 필요")
