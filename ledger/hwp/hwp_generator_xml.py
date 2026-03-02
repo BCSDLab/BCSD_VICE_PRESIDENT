@@ -543,7 +543,8 @@ def run(data, t_path: str, o_path: str):
 
     # 6. 지출 행마다 표 생성 (data_idx = 장부 전체 기준 0-based 인덱스 → +1이 장부 순번)
     for data_idx, row in data.iterrows():
-        title     = f'{data_idx + 1}. {row["종류"]}'
+        fee_suffix = ' (이체 수수료 500원)' if row.get('이체수수료', False) else ''
+        title = f'{data_idx + 1}. {row["종류"]}{fee_suffix}'
         raw = row.get('img_paths', [])
         if isinstance(raw, list):
             img_paths = raw
