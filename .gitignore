@@ -9,3 +9,4 @@ templates/*.hwp
 templates/*.hwpx
 templates/*.xlsx
 *.json
+!fee_checker/keywords.json

@@ -12,6 +12,7 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
 
+import json
 import openpyxl
 from common.fee_notice import _render_fee_notice_message
 
@@ -22,22 +23,15 @@ from common.fee_notice import _render_fee_notice_message
 
 TEMPLATE_FILE = "templates/fee_notice.md"
 OUTPUT_BASE_DIR = "output"
+KEYWORDS_FILE = Path(__file__).parent / "keywords.json"
 
-# 제외 키워드 (비고 열에서 검사)
-EXCLUDE_KEYWORDS = [
-    # 회원 상태
-    "졸업", "활동 중지", "활동 X", "탈퇴", "프로젝트 미참여",
-    # 휴학 (모든 휴학 변형 포함: 군 휴학, BoB 휴학 등)
-    "휴학",
-    # 직책
-    "트랙장", "교육장", "회장", "부회장", "팀장", "멘토", "Mentor",
-    # 외부 활동/취업
-    "소프티어", "싸피", "애플 아카데미", "취업", "취직",
-]
+# 제외 키워드 — fee_checker/keywords.json 에서 로드
+def _load_keywords():
+    with open(KEYWORDS_FILE, encoding="utf-8") as f:
+        data = json.load(f)
+    return data["exclude"], data["permanent_exclude"]
 
-# 이전 시트에서 다음 시트로 제외 상태를 이어가는 키워드 (영구적 상태만)
-# 트랙장·교육장 등 임시 역할은 포함하지 않음
-PERMANENT_EXCLUDE_KEYWORDS = ["졸업", "활동 중지", "탈퇴"]
+EXCLUDE_KEYWORDS, PERMANENT_EXCLUDE_KEYWORDS = _load_keywords()
 
 # 엑셀 시트 설정
 SHEETS_TO_PROCESS = ["2025", "2026"]
@@ -556,6 +550,74 @@ def aggregate_unpaid_fees(wb, current_month, excluded_tracks=None, excluded_pers
 
 
 # ============================================================================
+# Unknown Keyword Confirmation
+# ============================================================================
+
+
+def collect_unrecognized_notes(wb, unpaid_data):
+    """미납 대상자 중 비고가 있으나 면제 키워드 미인식인 항목 수집"""
+    unpaid_names = {name for name, _ in unpaid_data.keys()}
+    seen_notes = set()
+    result = []
+
+    for sheet_name in SHEETS_TO_PROCESS:
+        if sheet_name not in wb.sheetnames:
+            continue
+        ws = wb[sheet_name]
+        rows = parse_sheet(ws, sheet_name)
+        for row_data in rows:
+            name = row_data["name"]
+            notes = row_data["notes"]
+            if name not in unpaid_names or not notes:
+                continue
+            if any(kw in notes for kw in EXCLUDE_KEYWORDS):
+                continue
+            key = (notes, sheet_name)
+            if key not in seen_notes:
+                seen_notes.add(key)
+                result.append((name, sheet_name, notes))
+
+    return result
+
+
+def prompt_extra_keywords(unrecognized):
+    """미인식 비고를 출력하고 면제 처리할 키워드 입력 받기"""
+    if not unrecognized:
+        return []
+
+    from collections import defaultdict
+    groups = defaultdict(list)
+    for name, sheet_name, notes in unrecognized:
+        groups[(sheet_name, notes)].append(name)
+
+    extra_keywords = []
+    print("\n" + "=" * 70)
+    print("미등록 비고 확인")
+    print("=" * 70)
+    print("미납 대상자 중 등록되지 않은 비고가 있습니다.")
+    print("면제 처리할 키워드를 입력하거나 Enter를 눌러 건너뜁니다.\n")
+
+    for (sheet_name, notes), names in groups.items():
+        print(f"  시트  : {sheet_name}년")
+        print(f"  대상  : {', '.join(names)}")
+        print(f"  비고  : {notes}")
+        answer = input("  면제 처리하시겠습니까? (y/n): ").strip().lower()
+        if answer == "y":
+            extra_keywords.append(notes)
+        print()
+
+    if extra_keywords:
+        with open(KEYWORDS_FILE, encoding="utf-8") as f:
+            data = json.load(f)
+        data["exclude"] = list(dict.fromkeys(data["exclude"] + extra_keywords))
+        with open(KEYWORDS_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        print(f"[INFO] keywords.json에 저장됨: {extra_keywords}")
+
+    return extra_keywords
+
+
+# ============================================================================
 # Main Functions
 # ============================================================================
 
@@ -826,6 +888,13 @@ def main():
     print(f"[INFO] 처리 대상 시트: {SHEETS_TO_PROCESS}")
 
     unpaid_data = aggregate_unpaid_fees(wb, current_month, excluded_tracks, excluded_persons)
+
+    unrecognized = collect_unrecognized_notes(wb, unpaid_data)
+    extra_keywords = prompt_extra_keywords(unrecognized)
+    if extra_keywords:
+        EXCLUDE_KEYWORDS.extend(extra_keywords)
+        print(f"[INFO] 추가된 면제 키워드: {extra_keywords}")
+        unpaid_data = aggregate_unpaid_fees(wb, current_month, excluded_tracks, excluded_persons)
 
     print("\n" + "=" * 70)
     print("미납 데이터 요약")
