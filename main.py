@@ -12,6 +12,10 @@ def main():
     parser = argparse.ArgumentParser(description='BCSD 부회장 회계 자동화')
     parser.add_argument('start', help='시작 기간 (예: 2025-11)')
     parser.add_argument('end',   help='종료 기간 (예: 2026-02)')
+    parser.add_argument(
+        '--transfer-proof', metavar='PDF',
+        help='이체 내역 입금확인증 PDF 경로 (지정 시 해당 증빙 이미지를 표에 추가)',
+    )
     args = parser.parse_args()
 
     sheet_url = os.getenv('MANAGEMENT_SHEET_URL')
@@ -57,6 +61,25 @@ def main():
 
     print("[2/3] 이미지 다운로드 중...")
     data_with_paths = imgd.run(expenses, IMAGE_DIR)
+
+    if args.transfer_proof:
+        from ledger.hwp import transfer_proof as tp
+        print(f"      입금확인증 PDF 처리 중... ({args.transfer_proof})")
+        proof_dir = os.path.join(IMAGE_DIR, 'transfer_proofs')
+        pages = tp.pdf_to_pages(args.transfer_proof, proof_dir)
+        print(f"      → {len(pages)}페이지 파싱 완료")
+        matched = tp.match_transfer_proofs(pages, data_with_paths)
+        print(f"      → {len(matched)}건 매칭")
+        page_by_path = {p['image_path']: p for p in pages}
+        for idx, proof_paths in matched.items():
+            existing = data_with_paths.at[idx, 'img_paths']
+            if not isinstance(existing, list):
+                existing = list(existing) if existing else []
+            data_with_paths.at[idx, 'img_paths'] = proof_paths + existing
+            # 입금확인증 수수료 실제값으로 플래그 보정
+            proof_page = page_by_path.get(proof_paths[0])
+            if proof_page is not None:
+                data_with_paths.at[idx, '이체수수료'] = proof_page['fee'] > 0
 
     print(f"[3/3] HWP 생성 중... ({hwp_output})")
     try:
