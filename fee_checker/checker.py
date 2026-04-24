@@ -7,8 +7,8 @@ BCSD 회비 납부 검증 및 미납 메시지 생성 프로그램
 import os
 import sys
 import re
+import csv
 import argparse
-from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -24,6 +24,9 @@ from common.fee_notice import _render_fee_notice_message
 TEMPLATE_FILE = "templates/fee_notice.md"
 OUTPUT_BASE_DIR = "output"
 KEYWORDS_FILE = Path(__file__).parent / "keywords.json"
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+MEMBER_CSV_FILE = PROJECT_ROOT / "member.csv"
+TRACK_CSV_FILE = PROJECT_ROOT / "track.csv"
 
 # 제외 키워드 — fee_checker/keywords.json 에서 로드
 def _load_keywords():
@@ -136,12 +139,16 @@ def parse_exclusion_periods(notes, sheet_year):
     비고에서 제외 기간 파싱 → sheet_year 내 제외 월 집합 반환
 
     기간이 명시된 키워드("트랙장 (24년 11월~25년 9월)" 등)는 해당 기간 월만 제외.
+    전환 키워드("26년 1월 전환", "25년 8월 레귤러 전환" 등)는 전환 이전 월만 제외.
     기간 미기재("졸업", "활동 중지" 등)는 시트 전체(1~12월) 제외.
     """
     if not notes:
         return set()
 
     excluded_months = set()
+    transition_pattern = re.compile(
+        r'(?P<year>\d{2,4})년\s*(?P<month>\d{1,2})월(?:\s*레귤러)?\s*전환'
+    )
 
     # ~ 포함 여부로 단일 월 / 범위 / 개방형 구분
     period_pattern = re.compile(
@@ -155,6 +162,7 @@ def parse_exclusion_periods(notes, sheet_year):
     )
 
     for kw_match in keyword_pattern.finditer(notes):
+        keyword = kw_match.group(0)
         after_keyword = notes[kw_match.end():].lstrip()
         period_match = period_pattern.match(after_keyword) if after_keyword.startswith('(') else None
 
@@ -181,6 +189,16 @@ def parse_exclusion_periods(notes, sheet_year):
             for m in range(1, 13):
                 if (start_year, start_month) <= (sheet_year, m) <= (end_year, end_month):
                     excluded_months.add(m)
+        elif transition_match := transition_pattern.fullmatch(keyword):
+            transition_year = int(transition_match.group("year"))
+            if transition_year < 100:
+                transition_year += 2000
+            transition_month = int(transition_match.group("month"))
+
+            if sheet_year < transition_year:
+                excluded_months.update(range(1, 13))
+            elif sheet_year == transition_year:
+                excluded_months.update(range(1, transition_month))
         else:
             # 기간 미기재: 시트 전체 적용
             excluded_months.update(range(1, 13))
@@ -300,13 +318,6 @@ def _format_unpaid_detail(name, data, date_year, date_month, date_day):
     return f"{prefix} 회비가 미납되었습니다."
 
 
-def _validate_identifier(value):
-    """SQL 식별자 검증: 영문자·숫자·언더스코어만 허용 (SQL 인젝션 방지)"""
-    if not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', value):
-        raise ValueError(f"유효하지 않은 SQL 식별자: '{value}'")
-    return value
-
-
 def _normalize_name(name):
     """이름 정규화: 앞뒤 공백 제거"""
     if name is None:
@@ -321,140 +332,48 @@ def _normalize_track(track):
     return re.sub(r'[^a-zA-Z]', '', track).lower()
 
 
-@contextmanager
-def _ssh_tunnel(ssh_host, ssh_port, ssh_user, remote_host, remote_port, ssh_key_path=None, ssh_password=None):
-    """paramiko 기반 SSH 포트 포워딩 터널"""
-    import select
-    import threading
-    import socketserver
-    import paramiko
-
-    client = paramiko.SSHClient()
-    client.load_system_host_keys()
-    client.set_missing_host_key_policy(paramiko.RejectPolicy())
-
-    connect_kwargs: dict = {"port": ssh_port, "username": ssh_user}
-    if ssh_key_path:
-        connect_kwargs["key_filename"] = os.path.expanduser(ssh_key_path)
-    else:
-        connect_kwargs["password"] = ssh_password
-
-    client.connect(ssh_host, **connect_kwargs)
-    transport = client.get_transport()
-    if transport is None:
-        client.close()
-        raise RuntimeError("SSH 연결 후 transport를 가져올 수 없습니다.")
-
-    class _ForwardHandler(socketserver.BaseRequestHandler):
-        def handle(self):
-            chan = transport.open_channel(
-                "direct-tcpip",
-                (remote_host, remote_port),
-                self.request.getpeername(),
-            )
-            if chan is None:
-                return
-            while True:
-                readable = select.select([self.request, chan], [], [], 5)[0]
-                if self.request in readable:
-                    data = self.request.recv(1024)
-                    if not data:
-                        break
-                    chan.send(data)
-                if chan in readable:
-                    data = chan.recv(1024)
-                    if not data:
-                        break
-                    self.request.send(data)
-            chan.close()
-
-    server = None
-    try:
-        server = socketserver.ThreadingTCPServer(("127.0.0.1", 0), _ForwardHandler)
-        local_port = server.server_address[1]
-        threading.Thread(target=server.serve_forever, daemon=True).start()
-        yield local_port
-    finally:
-        if server is not None:
-            server.shutdown()
-            server.server_close()
-        client.close()
-
-
-@contextmanager
-def _db_connection():
-    """SSH 터널 경유 MySQL 연결 컨텍스트 매니저 (readonly)"""
-    try:
-        import pymysql
-    except ImportError as err:
-        raise ImportError("필요한 패키지: pip install pymysql paramiko") from err
-
-    ssh_host = os.getenv("SSH_HOST", "")
-    try:
-        ssh_port = int(os.getenv("SSH_PORT", "22"))
-    except ValueError:
-        raise ValueError("SSH_PORT 환경 변수가 유효한 정수가 아닙니다.")
-    ssh_user = os.getenv("SSH_USER", "")
-    ssh_key_path = os.getenv("SSH_KEY_PATH")
-    ssh_password = os.getenv("SSH_PASSWORD", "")
-
-    db_host = os.getenv("DB_HOST", "127.0.0.1")
-    try:
-        db_port = int(os.getenv("DB_PORT", "3306"))
-    except ValueError:
-        raise ValueError("DB_PORT 환경 변수가 유효한 정수가 아닙니다.")
-    db_name = os.getenv("DB_NAME", "")
-    db_user = os.getenv("DB_USER", "")
-    db_password = os.getenv("DB_PASSWORD", "")
-
-    if not ssh_host:
-        raise ValueError("SSH_HOST 환경 변수가 설정되지 않았습니다.")
-    if not ssh_user:
-        raise ValueError("SSH_USER 환경 변수가 설정되지 않았습니다.")
-
-    with _ssh_tunnel(ssh_host, ssh_port, ssh_user, db_host, db_port, ssh_key_path, ssh_password) as local_port:
-        conn = pymysql.connect(
-            host="127.0.0.1",
-            port=local_port,
-            user=db_user,
-            password=db_password,
-            database=db_name,
-            charset="utf8mb4",
-            cursorclass=pymysql.cursors.DictCursor,
-        )
-        try:
-            yield conn
-        finally:
-            conn.close()
+def _is_deleted_flag(value):
+    """CSV의 삭제 여부 값을 bool로 해석"""
+    return str(value).strip().lower() in {"1", "true", "yes"}
 
 
 def fetch_slack_id_map():
-    """DB에서 (이름, 트랙명) → Slack ID 매핑 조회 (readonly SELECT)"""
-    table          = _validate_identifier(os.getenv("DB_TABLE", ""))
-    col_name       = _validate_identifier(os.getenv("DB_COL_NAME", "name"))
-    col_slack_id   = _validate_identifier(os.getenv("DB_COL_SLACK_ID", "slack_id"))
-    col_track_id   = _validate_identifier(os.getenv("DB_COL_TRACK_ID", "track_id"))
-    col_is_deleted       = _validate_identifier(os.getenv("DB_COL_IS_DELETED", "is_deleted"))
-    track_table          = _validate_identifier(os.getenv("DB_TRACK_TABLE", ""))
-    track_col_id         = _validate_identifier(os.getenv("DB_TRACK_COL_ID", "id"))
-    track_col_name       = _validate_identifier(os.getenv("DB_TRACK_COL_NAME", "name"))
-    track_col_is_deleted = _validate_identifier(
-        os.getenv("DB_TRACK_COL_IS_DELETED", os.getenv("DB_COL_IS_DELETED", "is_deleted"))
-    )
+    """CSV에서 (이름, 트랙명) → Slack ID 매핑 조회"""
+    if not MEMBER_CSV_FILE.exists():
+        raise FileNotFoundError(f"회원 CSV를 찾을 수 없습니다: {MEMBER_CSV_FILE}")
+    if not TRACK_CSV_FILE.exists():
+        raise FileNotFoundError(f"트랙 CSV를 찾을 수 없습니다: {TRACK_CSV_FILE}")
 
-    with _db_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                f"SELECT m.`{col_name}`, t.`{track_col_name}` AS track_name, m.`{col_slack_id}`"
-                f" FROM `{table}` m"
-                f" JOIN `{track_table}` t ON m.`{col_track_id}` = t.`{track_col_id}`"
-                f" WHERE m.`{col_slack_id}` IS NOT NULL AND m.`{col_slack_id}` != ''"
-                f" AND m.`{col_is_deleted}` = 0 AND t.`{track_col_is_deleted}` = 0"
+    track_by_id = {}
+    with TRACK_CSV_FILE.open(encoding="utf-8", newline="") as f:
+        for row in csv.DictReader(f):
+            if _is_deleted_flag(row.get("is_deleted", "")):
+                continue
+            track_id = str(row.get("id", "")).strip()
+            track_name = row.get("name", "")
+            if track_id:
+                track_by_id[track_id] = track_name
+
+    slack_id_map = {}
+    with MEMBER_CSV_FILE.open(encoding="utf-8", newline="") as f:
+        for row in csv.DictReader(f):
+            if _is_deleted_flag(row.get("is_deleted", "")):
+                continue
+
+            slack_id = str(row.get("slack_id", "")).strip()
+            track_id = str(row.get("track_id", "")).strip()
+            track_name = track_by_id.get(track_id)
+
+            if not slack_id or not track_name:
+                continue
+
+            key = (
+                _normalize_name(row.get("name", "")),
+                _normalize_track(track_name),
             )
-            return {
-                (_normalize_name(row[col_name]), _normalize_track(row["track_name"])): row[col_slack_id]
-                for row in cur.fetchall()
-            }
+            slack_id_map[key] = slack_id
+
+    return slack_id_map
 
 
 def aggregate_unpaid_fees(wb, current_month, excluded_tracks=None, excluded_persons=None):
@@ -750,7 +669,7 @@ def send_slack_dms(unpaid_data, template_path):
 
     last_day = _previous_month_last_day()
 
-    print("[INFO] DB에서 Slack ID 조회 중...")
+    print(f"[INFO] CSV에서 Slack ID 조회 중... ({MEMBER_CSV_FILE.name}, {TRACK_CSV_FILE.name})")
     name_to_user_id = fetch_slack_id_map()
     print(f"[INFO] 조회된 멤버 수: {len(name_to_user_id)}명")
 
@@ -836,9 +755,8 @@ def main():
         action="store_true",
         help=(
             "미납 회원에게 Slack DM 발송. "
-            "필요한 환경 변수: SLACK_BOT_TOKEN, SLACK_SENDER_ID, SENDER_NAME, SENDER_PHONE, "
-            "SSH_HOST, SSH_USER, SSH_KEY_PATH (또는 SSH_PASSWORD), "
-            "DB_TABLE, DB_TRACK_TABLE (및 기타 DB_* 변수)"
+            "필요한 환경 변수: SLACK_BOT_TOKEN, SLACK_SENDER_ID, SENDER_NAME, SENDER_PHONE. "
+            "Slack ID 매핑은 프로젝트 루트의 member.csv, track.csv를 사용"
         ),
     )
     args = parser.parse_args()
