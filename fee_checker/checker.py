@@ -156,6 +156,14 @@ def parse_exclusion_periods(notes, sheet_year):
         r'(?:\s*(~)\s*(?:(\d{2,4})년\s*(\d{1,2})월\s*)?)?'
         r'\s*\)?'
     )
+    # 괄호 유무 및 키워드 앞뒤와 무관한 닫힌 범위.
+    # 종료 연도가 없으면 시작 연도와 같은 연도로 해석한다.
+    full_range_pattern = re.compile(
+        r'(\d{2,4})년\s*(\d{1,2})월\s*(~)\s*'
+        r'(?:(\d{2,4})년\s*)?(\d{1,2})월'
+    )
+    # 시작 시점 없이 종료 시점만 기록된 범위: "(~26년 3월)"
+    open_start_pattern = re.compile(r'~\s*(\d{2,4})년\s*(\d{1,2})월')
     # 긴 키워드 우선 매칭 (예: "군 휴학"이 "휴학"보다 먼저 매칭되도록)
     keyword_pattern = re.compile(
         '|'.join(re.escape(k) for k in sorted(EXCLUDE_KEYWORDS, key=len, reverse=True))
@@ -164,7 +172,23 @@ def parse_exclusion_periods(notes, sheet_year):
     for kw_match in keyword_pattern.finditer(notes):
         keyword = kw_match.group(0)
         after_keyword = notes[kw_match.end():].lstrip()
-        period_match = period_pattern.match(after_keyword) if after_keyword.startswith('(') else None
+        line_start = notes.rfind('\n', 0, kw_match.start()) + 1
+        line_end = notes.find('\n', kw_match.end())
+        if line_end == -1:
+            line_end = len(notes)
+        keyword_line = notes[line_start:line_end]
+
+        # 저장된 키워드 자체가 기간을 포함할 수 있다.
+        # 예: "부트캠프 (26년 5월 ~ 26년 11월)"
+        # 또한 기간이 키워드 앞뒤에 있거나 괄호가 없어도 같은 줄이면 인식한다.
+        period_match = full_range_pattern.search(keyword_line)
+        if period_match is None and after_keyword.startswith('('):
+            period_match = period_pattern.match(after_keyword)
+        if period_match is None:
+            period_match = period_pattern.search(keyword)
+        open_start_match = None
+        if period_match is None:
+            open_start_match = open_start_pattern.search(keyword_line)
 
         if period_match:
             start_year = int(period_match.group(1))
@@ -174,10 +198,13 @@ def parse_exclusion_periods(notes, sheet_year):
             has_tilde = period_match.group(3) is not None
 
             if has_tilde:
-                if period_match.group(4):  # 종료 월 명시
-                    end_year = int(period_match.group(4))
-                    if end_year < 100:
-                        end_year += 2000
+                if period_match.group(5):  # 종료 월 명시
+                    if period_match.group(4):
+                        end_year = int(period_match.group(4))
+                        if end_year < 100:
+                            end_year += 2000
+                    else:
+                        end_year = start_year
                     end_month = int(period_match.group(5))
                 else:  # 개방형: YY년 MM월~
                     end_year = 9999
@@ -188,6 +215,14 @@ def parse_exclusion_periods(notes, sheet_year):
 
             for m in range(1, 13):
                 if (start_year, start_month) <= (sheet_year, m) <= (end_year, end_month):
+                    excluded_months.add(m)
+        elif open_start_match:
+            end_year = int(open_start_match.group(1))
+            if end_year < 100:
+                end_year += 2000
+            end_month = int(open_start_match.group(2))
+            for m in range(1, 13):
+                if (sheet_year, m) <= (end_year, end_month):
                     excluded_months.add(m)
         elif transition_match := transition_pattern.fullmatch(keyword):
             transition_year = int(transition_match.group("year"))
@@ -206,7 +241,7 @@ def parse_exclusion_periods(notes, sheet_year):
     return excluded_months
 
 
-def should_exclude_row(row_data, sheet_year):
+def should_exclude_row(row_data, sheet_year, inherited_excluded_months=None):
     """
     행 제외 여부 판단
 
@@ -214,6 +249,7 @@ def should_exclude_row(row_data, sheet_year):
     모든 월이 납부("O"), 면제("-"), 또는 제외 기간 내에 있으면 True 반환.
     """
     excluded_months = parse_exclusion_periods(row_data["notes"], sheet_year)
+    excluded_months.update(inherited_excluded_months or ())
     months = row_data["months"]
     return all(
         val == "O" or val == "-" or m in excluded_months
@@ -221,7 +257,9 @@ def should_exclude_row(row_data, sheet_year):
     )
 
 
-def calculate_unpaid_detail(row_data, sheet_name, current_month):
+def calculate_unpaid_detail(
+    row_data, sheet_name, current_month, inherited_excluded_months=None
+):
     """
     미납 상세 계산
 
@@ -242,6 +280,7 @@ def calculate_unpaid_detail(row_data, sheet_name, current_month):
     months = row_data["months"]
     sheet_year = int(sheet_name)
     excluded_months = parse_exclusion_periods(row_data["notes"], sheet_year)
+    excluded_months.update(inherited_excluded_months or ())
 
     if sheet_name == "2025":
         unpaid = sum(
@@ -260,14 +299,21 @@ def calculate_unpaid_detail(row_data, sheet_name, current_month):
             if months.get(m) is None and m not in excluded_months:
                 monthly_amount += MONTHLY_FEE
 
-        # 학기별: 체크 대상 구간 내 미납 월이 하나라도 있으면 학기비 전액 청구
+        # 학기별: 정상 활동 학기는 미납 시 학기비 전액을 청구한다.
+        # 학기 도중 면제가 시작되거나 끝나는 경우에는 활동 월만 월 10,000원으로 계산한다.
         year_short = int(sheet_name) % 100
         for i, (sem_start, sem_end) in enumerate(SEMESTERS_2026, 1):
             checked = [
                 m for m in range(sem_start, sem_end + 1)
                 if m <= check_until and m not in excluded_months
             ]
-            if checked and any(months.get(m) is None for m in checked):
+            unpaid_months = [m for m in checked if months.get(m) is None]
+            has_excluded_months = any(
+                m in excluded_months for m in range(sem_start, sem_end + 1)
+            )
+            if unpaid_months and has_excluded_months:
+                monthly_amount += len(unpaid_months) * MONTHLY_FEE
+            elif unpaid_months:
                 unpaid_semesters.append(f"{year_short}-{i}")
 
         return {"monthly_amount": monthly_amount, "unpaid_semesters": unpaid_semesters}
@@ -395,7 +441,8 @@ def aggregate_unpaid_fees(wb, current_month, excluded_tracks=None, excluded_pers
 
     aggregated = {}
     excluded_keys = set()
-    exempt_names_from_2025 = set()
+    # 2025 시트 비고에 기록된 2026년 면제 월을 이름과 트랙 기준으로 이월한다.
+    inherited_2026_exclusions = {}
 
     for sheet_name in SHEETS_TO_PROCESS:
         if sheet_name not in wb.sheetnames:
@@ -416,16 +463,24 @@ def aggregate_unpaid_fees(wb, current_month, excluded_tracks=None, excluded_pers
                 has_permanent = any(kw in notes for kw in PERMANENT_EXCLUDE_KEYWORDS)
                 if has_permanent and parse_exclusion_periods(notes, 2026):
                     # 면제 기간이 2026년까지 이어지는 경우만 다음 시트에 이어감
-                    exempt_names_from_2025.add(row_data["name"])
+                    member_key = (
+                        row_data["name"],
+                        _normalize_track(row_data["track"]),
+                    )
+                    inherited_2026_exclusions.setdefault(member_key, set()).update(
+                        parse_exclusion_periods(notes, 2026)
+                    )
 
         for row_data in rows:
             name = row_data["name"]
             track = row_data["track"]
             key = (name, track)
 
-            if name in exempt_names_from_2025:
-                excluded_count += 1
-                continue
+            inherited_excluded_months = set()
+            if sheet_name == "2026":
+                inherited_excluded_months = inherited_2026_exclusions.get(
+                    (name, _normalize_track(track)), set()
+                )
 
             if _normalize_track(track) in excluded_tracks:
                 excluded_keys.add(key)
@@ -437,13 +492,20 @@ def aggregate_unpaid_fees(wb, current_month, excluded_tracks=None, excluded_pers
                 excluded_count += 1
                 continue
 
-            if should_exclude_row(row_data, int(sheet_name)):
+            if should_exclude_row(
+                row_data, int(sheet_name), inherited_excluded_months
+            ):
                 excluded_count += 1
                 continue
 
             included_count += 1
 
-            detail = calculate_unpaid_detail(row_data, sheet_name, current_month)
+            detail = calculate_unpaid_detail(
+                row_data,
+                sheet_name,
+                current_month,
+                inherited_excluded_months,
+            )
             unpaid_amount = detail["monthly_amount"] + len(detail["unpaid_semesters"]) * SEMESTER_FEE
 
             if key not in aggregated:

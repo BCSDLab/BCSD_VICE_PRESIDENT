@@ -25,12 +25,23 @@ def main():
 
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
+    preferred_exts = ('.hwp', '.hwpx') if sys.platform == 'win32' else ('.hwpx', '.hwp')
     hwp_template = next(
-        (f'templates/{f}' for f in os.listdir('templates') if f.startswith('evid_format')),
+        (
+            f'templates/{f}'
+            for ext in preferred_exts
+            for f in sorted(os.listdir('templates'))
+            if f.startswith('evid_format') and f.endswith(ext)
+        ),
         None
     )
     if not hwp_template:
         raise FileNotFoundError("templates/evid_format.hwp(x) 파일을 찾을 수 없습니다.")
+    if sys.platform != 'win32' and os.path.splitext(hwp_template)[1].lower() != '.hwpx':
+        raise ValueError(
+            "Linux/macOS에서는 templates/evid_format.hwpx 템플릿이 필요합니다. "
+            "현재 .hwp 바이너리 템플릿만 있어 증빙 문서를 생성할 수 없습니다."
+        )
 
     period = f'{args.start.replace("-", "")}_{args.end.replace("-", "")}'
     ledger_output = os.path.join(OUTPUT_DIR, f'BCSD_{period}_장부.xlsx')

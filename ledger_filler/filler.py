@@ -87,7 +87,7 @@ def _get_credentials():
                 print(f"[WARNING] 토큰 갱신 실패, 재인증합니다: {e}")
                 creds = None
         if not creds or not creds.valid:
-            secret_json = os.getenv('GOOGLE_OAUTH_CLIENT_JSON') or os.getenv('GOOGLE_SECRET_JSON')
+            secret_json = os.getenv('GOOGLE_OAUTH_CLIENT_JSON')
             if not secret_json:
                 raise ValueError("[ERROR] GOOGLE_OAUTH_CLIENT_JSON 환경변수가 설정되지 않았습니다.")
             flow = InstalledAppFlow.from_client_secrets_file(secret_json, _GOOGLE_SCOPES)

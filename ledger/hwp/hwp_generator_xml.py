@@ -40,7 +40,9 @@ class _TemplateParams:
     margin_tb: int = 141
     # 표 outMargin (sz.height 보정용)
     out_margin: int = 283
+    table_height: int | None = None
     # 표 pos.vertOffset
+    table_treat_as_char: str = '0'
     vert_offset: int = 434
     # 스타일 ID
     border_fill_id: str = '3'
@@ -224,7 +226,12 @@ def _read_template_params(expense_ps: list) -> _TemplateParams:
 
     tbl_pos = tbl.find(f'{{{HP}}}pos')
     if tbl_pos is not None:
+        p.table_treat_as_char = tbl_pos.get('treatAsChar', p.table_treat_as_char)
         p.vert_offset = _int_or(tbl_pos.get('vertOffset'), p.vert_offset)
+
+    tbl_sz = tbl.find(f'{{{HP}}}sz')
+    if tbl_sz is not None:
+        p.table_height = _int_or(tbl_sz.get('height'), p.table_height)
 
     tbl_out = tbl.find(f'{{{HP}}}outMargin')
     if tbl_out is not None:
@@ -399,11 +406,11 @@ def _build_table(
     z += 1
 
     om = str(params.out_margin)
-    total_h = params.title_row_h + params.img_cell_h + params.out_margin
+    total_h = params.table_height or (params.title_row_h + params.img_cell_h)
     _hp(tbl, 'sz',  {'width': str(params.cell_w), 'widthRelTo': 'ABSOLUTE',
                      'height': str(total_h), 'heightRelTo': 'ABSOLUTE', 'protect': '0'})
     _hp(tbl, 'pos', {
-        'treatAsChar': '1', 'affectLSpacing': '0', 'flowWithText': '1',
+        'treatAsChar': params.table_treat_as_char, 'affectLSpacing': '0', 'flowWithText': '1',
         'allowOverlap': '0', 'holdAnchorAndSO': '0',
         'vertRelTo': 'PARA', 'horzRelTo': 'COLUMN',
         'vertAlign': 'TOP', 'horzAlign': 'LEFT',

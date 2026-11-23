@@ -13,7 +13,7 @@ BCSD 부회장의 반복적인 회계 업무를 자동화하는 Python 도구 �
 ## 요구사항
 
 - Python 3.10+
-- Google API 접근 권한 (Docs / Drive / Sheets)
+- Google OAuth 계정의 Docs / Drive / Sheets 접근 권한
 - 증빙 서류 생성: Windows → `pyhwpx` 기반 `.hwp`/`.hwpx`, Linux/macOS → HWPX XML 직접 조작
 - 입금확인증 PDF 첨부 (`--transfer-proof`): poppler (`pdftoppm`, `pdftotext`) 시스템 패키지 필요
 
@@ -33,8 +33,8 @@ cp .env.example .env   # .env 구성 후 실행
 | 변수 | 설명 |
 |---|---|
 | `MANAGEMENT_SHEET_URL` | 재학생 회비 관리 문서 Google Sheets URL |
-| `GOOGLE_OAUTH_CLIENT_JSON` | OAuth 클라이언트 JSON 경로 (`fill_ledger.py` 전용) |
-| `GOOGLE_SERVICE_ACCOUNT_JSON` | 서비스 계정 JSON 경로 (`main.py` 이미지 수집 전용) |
+| `GOOGLE_OAUTH_CLIENT_JSON` | Sheets / Docs / Drive 공통 OAuth 데스크톱 클라이언트 JSON 경로 |
+| `GOOGLE_DOCS_QUOTA_PROJECT` | Docs API가 사용 설정되어 있고 로그인 계정이 사용할 수 있는 Google Cloud 프로젝트 (선택) |
 | `DEBUG` | Windows HWP 자동화 시 창 표시 여부 (`True` / `False`) |
 
 ### `fill_ledger.py` 추가
@@ -53,11 +53,8 @@ cp .env.example .env   # .env 구성 후 실행
 | `SENDER_PHONE` | 발신자 연락처 |
 | `SLACK_BOT_TOKEN` | Slack Bot Token |
 | `SLACK_SENDER_ID` | 발신자 Slack user_id |
-| `SSH_HOST`, `SSH_PORT`, `SSH_USER` | DB 터널용 SSH 정보 |
-| `SSH_KEY_PATH` 또는 `SSH_PASSWORD` | SSH 인증 정보 |
-| `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD` | MySQL 연결 정보 |
-| `DB_TABLE`, `DB_TRACK_TABLE` | 회원 / 트랙 테이블명 |
-| `DB_COL_*`, `DB_TRACK_COL_*` | 컬럼명 오버라이드 (선택) |
+
+Slack ID 매핑은 프로젝트 루트의 `member.csv`, `track.csv`를 사용합니다. DB 연결이나 SSH 터널은 사용하지 않습니다.
 
 > Slack 봇 권한: `users:read`, `im:write`, `chat:write`
 
@@ -75,7 +72,7 @@ python fill_ledger.py 신한_거래내역/신한_거래내역_2602.xlsx  # 로�
 python fill_ledger.py --force                              # 이미 기입된 월 덮어쓰기
 ```
 
-최초 실행 시 Google OAuth 인증 창이 열리며, 토큰은 `.google_token.json`에 캐시됩니다.
+최초 실행 시 Google OAuth 인증 창에서 Drive 전체 권한을 요청합니다. 동의 범위를 확인하세요. 모든 도구가 `.google_token.json`을 공유하며 서비스 계정 키는 사용하지 않습니다.
 
 **자동/수동 기입 범위**
 
@@ -102,7 +99,7 @@ python main.py <시작기간> <종료기간> [--transfer-proof PDF]
 python main.py 2025-11 2026-02
 python main.py 2025-11 2026-02 --transfer-proof report-1.pdf
 ```
-
+%
 **옵션**
 
 | 옵션 | 설명 |
@@ -179,7 +176,12 @@ python fee_check.py --send-dm                    # Slack DM 발송 포함
 
 - Google API JSON 키 파일은 저장소에 커밋하지 마세요.
 - 운영 전 테스트 문서에서 먼저 검증하는 것을 권장합니다.
-- 서비스 계정이 접근해야 하는 Google Docs/Drive 파일은 서비스 계정 이메일에 공유되어 있어야 합니다.
+- OAuth로 로그인한 계정에 대상 Docs / Drive / Sheets 파일 접근 권한이 있어야 합니다.
+
+---
+
+## 에이전트 스킬
+
 | 스킬 | 역할 |
 |---|---|
 | [장부 작성](.agents/skills/bcsd-ledger-writing/SKILL.md) | 기존 양식으로 제출 장부·증빙 생성, 완성본에 확인증 추가 |

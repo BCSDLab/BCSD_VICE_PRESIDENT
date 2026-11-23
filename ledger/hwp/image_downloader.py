@@ -1,27 +1,17 @@
 import os
 import re
 import requests
-from dotenv import load_dotenv
-from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from common.google_drive import _extract_drive_file_id
+from ledger_filler.filler import _get_credentials
 
-load_dotenv()
-_GOOGLE_SECRET_JSON = os.getenv('GOOGLE_SERVICE_ACCOUNT_JSON') or os.getenv('GOOGLE_SECRET_JSON')
-if not _GOOGLE_SECRET_JSON:
-    raise RuntimeError(
-        "GOOGLE_SERVICE_ACCOUNT_JSON 환경변수가 설정되지 않았습니다. "
-        ".env 파일에 서비스 계정 키 경로를 지정해주세요."
-    )
-
-_credentials = service_account.Credentials.from_service_account_file(
-    _GOOGLE_SECRET_JSON,
-    scopes=[
-        'https://www.googleapis.com/auth/documents.readonly',
-        'https://www.googleapis.com/auth/drive.readonly'
-    ]
+_credentials = _get_credentials()
+_docs_quota_project = os.getenv('GOOGLE_DOCS_QUOTA_PROJECT')
+_docs_credentials = (
+    _credentials.with_quota_project(_docs_quota_project)
+    if _docs_quota_project else _credentials
 )
-_docs_service = build('docs', 'v1', credentials=_credentials)
+_docs_service = build('docs', 'v1', credentials=_docs_credentials)
 _drive_service = build('drive', 'v3', credentials=_credentials)
 
 def _get_urls_from_doc(doc_id, tx_amount=None):
