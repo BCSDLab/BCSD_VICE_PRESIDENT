@@ -12,6 +12,7 @@ description: BCSD 제출 장부·회비 관리/납부 문서의 입금·출금 �
 - 거래 관리·납부 문서의 값 또는 설명을 고치는 일은 [관리 문서 업데이트](../bcsd-fee-management/SKILL.md), 제출 장부·증빙 산출물을 생성/수정하는 일은 [장부 작성](../bcsd-ledger-writing/SKILL.md)에 연결한다. 검수 결과만 전달하며 직접 수정하지 않는다.
 - 면제·탈퇴·보안 트랙 제외와 회비 사유 판정은 [사유 자동 판단](../bcsd-fee-management/references/workflow.md#사유-자동-판단)의 단일 기준을 따른다. 별도 예외 규칙을 만들지 않는다.
 - 세부 증거 수집과 신뢰성 함정은 [검수 절차](references/workflow.md)를 따른다.
+- 의존성·인증·원본 접근이 준비되지 않았으면 [초기 설정](../bcsd-initial-setup/SKILL.md)을 참고한다. 검수 요청만으로 실제 설치·설정 변경이나 재인증을 실행하지 않는다.
 
 ## 전수 검수 범위
 

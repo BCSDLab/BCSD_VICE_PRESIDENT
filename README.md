@@ -184,6 +184,7 @@ python fee_check.py --send-dm                    # Slack DM 발송 포함
 
 | 스킬 | 역할 |
 |---|---|
+| [초기 설정](.agents/skills/bcsd-initial-setup/SKILL.md) | 가상환경·OS 의존성·환경변수·OAuth·문서 권한 준비와 안전한 초기 점검 |
 | [장부 작성](.agents/skills/bcsd-ledger-writing/SKILL.md) | 기존 양식으로 제출 장부·증빙 생성, 완성본에 확인증 추가 |
 | [관리 문서 업데이트](.agents/skills/bcsd-fee-management/SKILL.md) | 은행 거래·납부 반영, 근거와 기간에 따른 면제·미납 사유 자동 판단 |
 | [장부 검수](.agents/skills/bcsd-ledger-audit/SKILL.md) | 원본·금액·잔액·영수증·수수료·양식의 읽기 전용 검증 |
