@@ -180,3 +180,10 @@ python fee_check.py --send-dm                    # Slack DM 발송 포함
 - Google API JSON 키 파일은 저장소에 커밋하지 마세요.
 - 운영 전 테스트 문서에서 먼저 검증하는 것을 권장합니다.
 - 서비스 계정이 접근해야 하는 Google Docs/Drive 파일은 서비스 계정 이메일에 공유되어 있어야 합니다.
+| 스킬 | 역할 |
+|---|---|
+| [장부 작성](.agents/skills/bcsd-ledger-writing/SKILL.md) | 기존 양식으로 제출 장부·증빙 생성, 완성본에 확인증 추가 |
+| [관리 문서 업데이트](.agents/skills/bcsd-fee-management/SKILL.md) | 은행 거래·납부 반영, 근거와 기간에 따른 면제·미납 사유 자동 판단 |
+| [장부 검수](.agents/skills/bcsd-ledger-audit/SKILL.md) | 원본·금액·잔액·영수증·수수료·양식의 읽기 전용 검증 |
+
+생성·운영 문서 수정·검수의 권한은 별개입니다. 보안 트랙은 미납 집계·안내에서 기본 제외하되 은행 거래 원본과 전체 거래 대조에서는 제외하지 않습니다.
